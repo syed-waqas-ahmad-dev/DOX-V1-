@@ -1,0 +1,6 @@
+{
+  "name": "OX Shoes - Database & Architecture Suite",
+  "description": "Enterprise-grade MongoDB Atlas & Mongoose architecture for OX Shoes Pakistan with strict TypeScript schemas, seeders, compound indexes, and live management console.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

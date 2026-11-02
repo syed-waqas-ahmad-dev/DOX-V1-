@@ -112,7 +112,6 @@ const userSchema = new Schema<IUser, UserModelType, IUserMethods>(
         message: '{VALUE} is not a valid user role',
       },
       default: UserRole.CUSTOMER,
-      index: true,
     },
     permissions: {
       type: [String],
@@ -177,6 +176,14 @@ const userSchema = new Schema<IUser, UserModelType, IUserMethods>(
 userSchema.index({ email: 1, isDeleted: 1 });
 userSchema.index({ phone: 1 });
 userSchema.index({ role: 1, createdAt: -1 });
+// Enforce unique active Super Admin at database level to prevent setup race conditions
+userSchema.index(
+  { role: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { role: UserRole.SUPER_ADMIN, isDeleted: false },
+  }
+);
 
 /**
  * Pre-save hook: Hash password with bcrypt and generate unique referral code

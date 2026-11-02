@@ -6,14 +6,47 @@
  */
 
 import { NextResponse, type NextRequest } from 'next/server';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
 import { connectToDatabase } from '@/lib/db/connect';
 import { Product, Order, User, Category } from '@/models';
 import { paginateQuery } from '@/lib/db/pagination';
-import { ProductCategory, ProductSubCategory, type IProduct } from '@/types';
+import { ProductCategory, ProductSubCategory, UserRole, type IProduct } from '@/types';
 import type { Filter } from 'mongodb';
+
+export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
   try {
+    if (process.env.NODE_ENV === 'production') {
+      return NextResponse.json(
+        { success: false, error: 'Database query testing endpoint is disabled in production.' },
+        { status: 403 }
+      );
+    }
+
+    let session = null;
+    try {
+      session = await getServerSession(authOptions);
+    } catch {
+      session = null;
+    }
+    const sessionRole = (session?.user as { role?: string } | undefined)?.role;
+
+    if (!session?.user) {
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized: Authentication required.' },
+        { status: 401 }
+      );
+    }
+
+    if (sessionRole !== UserRole.ADMIN && sessionRole !== UserRole.SUPER_ADMIN) {
+      return NextResponse.json(
+        { success: false, error: 'Forbidden: Administrative privileges required.' },
+        { status: 403 }
+      );
+    }
+
     const body = (await req.json().catch(() => ({}))) as {
       action?: 'paginate_products' | 'test_soft_delete' | 'count_all' | 'category_breakdown';
       page?: number;

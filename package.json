@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "clean": "next clean"
+    "clean": "next clean",
+    "db:migrate": "tsx scripts/run-migrations.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
@@ -42,7 +43,8 @@
     "eslint": "9.39.1",
     "eslint-config-next": "16.0.8",
     "firebase-tools": "^15.0.0",
-    "tailwindcss": "4.1.11",
+    "tailwindcss": "3.4.1",
+    "tsx": "^4.23.15",
     "tw-animate-css": "^1.4.0",
     "typescript": "5.9.3"
   }

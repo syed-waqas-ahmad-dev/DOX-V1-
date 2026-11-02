@@ -1,16 +1,64 @@
 /**
  * @file app/api/db/seed/route.ts
- * @description API endpoint to trigger or dry-run database seeding for OX Shoes.
+ * @description Secure administrative API endpoint to trigger or dry-run database seeding for OX Shoes.
+ * Production protection: Strictly disabled in production (process.env.NODE_ENV === 'production').
+ * RBAC authorization: Strictly restricted to Super Administrator session.
+ * Safe defaults: wipeExisting defaults to FALSE; destructive wiping requires explicit confirmWipe === true.
  * Strict TypeScript: ZERO `any`.
  */
 
 import { NextResponse, type NextRequest } from 'next/server';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
+import { UserRole } from '@/types';
 import { seedDatabase } from '@/lib/db/seed';
+
+export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
   try {
-    const body = (await req.json().catch(() => ({}))) as { wipeExisting?: boolean; dryRun?: boolean };
-    const wipe = body.wipeExisting !== false;
+    // 1. Production Safeguard: Never permit database wiping or synthetic re-seeding in production
+    if (process.env.NODE_ENV === 'production') {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Forbidden: Database seeding is strictly disabled in production environments.',
+        },
+        { status: 403 }
+      );
+    }
+
+    // 2. Authentication & RBAC Check: Require authenticated Super Administrator
+    let session = null;
+    try {
+      session = await getServerSession(authOptions);
+    } catch {
+      session = null;
+    }
+    const sessionRole = (session?.user as { role?: string } | undefined)?.role;
+
+    if (!session?.user) {
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized: Authentication required.' },
+        { status: 401 }
+      );
+    }
+
+    if (sessionRole !== UserRole.SUPER_ADMIN) {
+      return NextResponse.json(
+        { success: false, error: 'Forbidden: Only Super Administrators can execute database seeding.' },
+        { status: 403 }
+      );
+    }
+
+    const body = (await req.json().catch(() => ({}))) as {
+      wipeExisting?: boolean;
+      confirmWipe?: boolean;
+      dryRun?: boolean;
+    };
+
+    // 3. Safe Default: Wiping requires BOTH wipeExisting: true AND confirmWipe: true
+    const wipe = body.wipeExisting === true && body.confirmWipe === true;
 
     if (body.dryRun) {
       return NextResponse.json({
@@ -32,12 +80,14 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Attempt real database connection & seeding
+    // 4. Execute seeding only in non-production with verified Super Admin credentials
     const results = await seedDatabase(wipe);
 
     return NextResponse.json({
       success: true,
-      message: 'Database seeded successfully with authentic Pakistani footwear and enterprise records!',
+      message: wipe
+        ? 'Database wiped and seeded successfully with baseline records.'
+        : 'Baseline records seeded successfully without wiping existing data.',
       results,
     });
   } catch (error: unknown) {
@@ -46,7 +96,6 @@ export async function POST(req: NextRequest) {
       {
         success: false,
         error: message,
-        tip: 'Ensure MONGODB_URI is configured with valid credentials in your environment or .env.local file.',
       },
       { status: 500 }
     );

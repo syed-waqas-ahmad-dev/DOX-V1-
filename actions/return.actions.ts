@@ -14,6 +14,11 @@ import { handleActionError } from '@/lib/error-handler';
 import { ReturnReason, ReturnStatus, PaymentMethod, type IReturnRequest, type CreateReturnInput } from '@/types';
 import { Types } from 'mongoose';
 
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
+import { isElevatedAdminRole, isAdminRole } from '@/lib/auth-guard';
+import { UserRole } from '@/types';
+
 // In-memory returns store for offline / mock mode
 declare global {
   var __oxMockReturns: IReturnRequest[] | undefined;
@@ -45,6 +50,16 @@ export async function createReturnRequest(
   input: CreateReturnInput
 ): Promise<ActionResult<{ rmaNumber: string; status: string }>> {
   try {
+    let session = null;
+    try {
+      session = await getServerSession(authOptions);
+    } catch {
+      session = null;
+    }
+
+    const sessionUser = session?.user as { id?: string; email?: string; role?: string } | undefined;
+    const isElevatedAdmin = isElevatedAdminRole(sessionUser?.role);
+
     await connectToDatabase();
 
     const randomCode = Math.floor(1000 + Math.random() * 9000);
@@ -54,7 +69,7 @@ export async function createReturnRequest(
       const newReturn: IReturnRequest = {
         _id: new Types.ObjectId(),
         orderId: new Types.ObjectId(),
-        userId: new Types.ObjectId('660e1234567890abcdef1000'),
+        userId: input.orderNumber.startsWith('GUEST') ? null : new Types.ObjectId('660e1234567890abcdef1000'),
         orderItemId: new Types.ObjectId(),
         reason: input.reason,
         description: input.comments || 'Size exchange request',
@@ -79,10 +94,30 @@ export async function createReturnRequest(
       return errorResponse(`Order "${input.orderNumber}" not found. Please verify your invoice receipt.`);
     }
 
+    // Verify ownership or admin clearance
+    if (!isElevatedAdmin) {
+      const orderUserId = order.userId?.toString();
+      const orderGuestEmail = order.guestEmail?.toLowerCase().trim();
+      const sessionEmail = sessionUser?.email?.toLowerCase().trim();
+
+      if (orderUserId) {
+        if (!sessionUser || orderUserId !== sessionUser.id) {
+          return errorResponse('Unauthorized: You can only request returns for your own orders.');
+        }
+      } else if (orderGuestEmail) {
+        // For guest orders, verify email matches session or provided guest details
+        if (!sessionUser || sessionEmail !== orderGuestEmail) {
+          return errorResponse('Unauthorized: Email mismatch for this guest order return request.');
+        }
+      } else {
+        return errorResponse('Unauthorized: Order ownership could not be verified.');
+      }
+    }
+
     const firstItem = order.orderItems[0];
     const created = await ReturnRequest.create({
       orderId: order._id,
-      userId: order.userId || new Types.ObjectId(),
+      userId: order.userId,
       orderItemId: firstItem ? firstItem._id : new Types.ObjectId(),
       reason: input.reason,
       description: input.comments || 'Customer return request',
@@ -104,15 +139,37 @@ export async function createReturnRequest(
 
 export async function getUserReturns(): Promise<ActionResult<IReturnRequest[]>> {
   try {
+    let session = null;
+    try {
+      session = await getServerSession(authOptions);
+    } catch {
+      session = null;
+    }
+
+    if (!session?.user) {
+      return errorResponse('Unauthenticated: Please sign in to view return requests.');
+    }
+
+    const sessionUser = session.user as { id: string; role: string };
+    const isAdmin = isAdminRole(sessionUser.role as any);
+
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
-      return successResponse(mockReturns);
+      if (isAdmin) {
+        return successResponse(mockReturns);
+      }
+      return successResponse(mockReturns.filter(r => r.userId?.toString() === sessionUser.id));
     }
 
-    const returns = await ReturnRequest.find().sort({ createdAt: -1 }).lean();
+    const query: Record<string, unknown> = {};
+    if (!isAdmin) {
+      query.userId = new Types.ObjectId(sessionUser.id);
+    }
+
+    const returns = await ReturnRequest.find(query).sort({ createdAt: -1 }).lean();
     return successResponse(JSON.parse(JSON.stringify(returns)));
   } catch (error: unknown) {
-    return successResponse(mockReturns);
+    return handleActionError(error);
   }
 }

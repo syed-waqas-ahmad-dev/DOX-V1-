@@ -48,6 +48,10 @@ const notificationSchema = new Schema<INotification, NotificationModelType>(
       default: false,
       index: true,
     },
+    readBy: {
+      type: [Schema.Types.Mixed],
+      default: [],
+    },
   },
   {
     collection: 'notifications',

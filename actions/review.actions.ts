@@ -14,12 +14,29 @@ import { handleActionError } from '@/lib/error-handler';
 import { Types } from 'mongoose';
 import { MockDb } from '@/lib/db/mock-store';
 import type { IReview } from '@/types';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
 
 export async function createReviewAction(
   userId: string,
   input: CreateReviewInput
 ): Promise<ActionResult<IReview>> {
   try {
+    let session = null;
+    try {
+      session = await getServerSession(authOptions);
+    } catch {
+      session = null;
+    }
+
+    if (!session?.user) {
+      return errorResponse('Unauthenticated: Please sign in to submit a review.');
+    }
+
+    if (userId !== session.user.id) {
+      return errorResponse('Unauthorized: Session user mismatch.');
+    }
+
     await connectToDatabase();
     const validated = createReviewSchema.parse(input);
 

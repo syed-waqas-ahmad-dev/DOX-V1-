@@ -22,7 +22,7 @@ const returnRequestSchema = new Schema<IReturnRequest, ReturnRequestModelType>(
     userId: {
       type: Schema.Types.ObjectId,
       ref: 'User',
-      required: [true, 'User reference is required'],
+      default: null,
       index: true,
     },
     orderItemId: {

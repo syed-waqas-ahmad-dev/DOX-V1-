@@ -1,21 +1,34 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
 import { connectToDatabase } from '@/lib/db/connect';
 import { Wishlist } from '@/models/Wishlist';
 import { Product } from '@/models/Product';
 
-async function handleGetWishlist(userId: string | null) {
-  if (!userId) {
-    return NextResponse.json({ success: true, items: [] });
+async function handleGetWishlist() {
+  let session = null;
+  try {
+    session = await getServerSession(authOptions);
+  } catch {
+    session = null;
   }
+
+  if (!session?.user) {
+    return NextResponse.json(
+      { success: false, error: 'Unauthorized: Authentication required to view wishlist.' },
+      { status: 401 }
+    );
+  }
+
+  const userId = session.user.id;
 
   const conn = await connectToDatabase();
   if (!conn) {
     return NextResponse.json({ success: true, items: [] });
   }
 
-  // Ensure Product model is registered for populate if needed
   if (!Product) {
-    // Registered
+    // Ensure Product model is registered for populate
   }
 
   const items = await Wishlist.find({ userId })
@@ -31,9 +44,7 @@ async function handleGetWishlist(userId: string | null) {
 
 export async function GET(req: NextRequest) {
   try {
-    const searchParams = req.nextUrl.searchParams;
-    const userId = searchParams.get('userId');
-    return await handleGetWishlist(userId);
+    return await handleGetWishlist();
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Failed to list wishlist items';
     return NextResponse.json({ success: false, error: message }, { status: 500 });
@@ -42,9 +53,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const userId = body?.userId;
-    return await handleGetWishlist(userId);
+    return await handleGetWishlist();
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Failed to list wishlist items';
     return NextResponse.json({ success: false, error: message }, { status: 500 });

@@ -1,17 +1,20 @@
-/**
- * @file app/api/notifications/list/route.ts
- * @description API route to list in-app customer notifications from MongoDB 'notifications' collection.
- * Strict TypeScript: ZERO `any`.
- */
-
 import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
 import { connectToDatabase } from '@/lib/db/connect';
 import { Notification } from '@/models/Notification';
 
 export async function GET(req: NextRequest) {
   try {
-    const searchParams = req.nextUrl.searchParams;
-    const userId = searchParams.get('userId');
+    let session = null;
+    try {
+      session = await getServerSession(authOptions);
+    } catch {
+      session = null;
+    }
+
+    // Authenticated user's ID or fallback to 'guest' / broadcast notifications for unauthenticated visitors
+    const userId = session?.user?.id || 'guest';
 
     const conn = await connectToDatabase();
     if (!conn) {
@@ -20,7 +23,7 @@ export async function GET(req: NextRequest) {
         notifications: [
           {
             _id: 'mock-notif-1',
-            userId: userId || 'guest',
+            userId,
             title: 'Welcome to OX Shoes Pakistan 🎉',
             message: 'Nationwide Cash on Delivery with open-box delivery inspection available on all orders.',
             type: 'promotion',
@@ -32,15 +35,25 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    const filter: Record<string, unknown> = {};
-    if (userId) {
-      filter.$or = [{ userId }, { userId: 'all' }, { userId: 'guest' }];
-    }
+    const filter: Record<string, unknown> = {
+      $or: [{ userId }, { userId: 'all' }],
+    };
 
-    const notifications = await Notification.find(filter)
+    const rawNotifications = await Notification.find(filter)
       .sort({ createdAt: -1 })
       .limit(50)
       .lean();
+
+    const notifications = rawNotifications.map((n) => {
+      const isReadForUser =
+        n.userId === 'all'
+          ? Array.isArray(n.readBy) && n.readBy.some((id) => String(id) === String(userId))
+          : Boolean(n.isRead);
+      return {
+        ...n,
+        isRead: isReadForUser,
+      };
+    });
 
     const unreadCount = notifications.filter((n) => !n.isRead).length;
 
@@ -57,8 +70,14 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json().catch(() => ({}));
-    const userId = body?.userId;
+    let session = null;
+    try {
+      session = await getServerSession(authOptions);
+    } catch {
+      session = null;
+    }
+
+    const userId = session?.user?.id || 'guest';
 
     const conn = await connectToDatabase();
     if (!conn) {
@@ -69,15 +88,25 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const filter: Record<string, unknown> = {};
-    if (userId) {
-      filter.$or = [{ userId }, { userId: 'all' }, { userId: 'guest' }];
-    }
+    const filter: Record<string, unknown> = {
+      $or: [{ userId }, { userId: 'all' }],
+    };
 
-    const notifications = await Notification.find(filter)
+    const rawNotifications = await Notification.find(filter)
       .sort({ createdAt: -1 })
       .limit(50)
       .lean();
+
+    const notifications = rawNotifications.map((n) => {
+      const isReadForUser =
+        n.userId === 'all'
+          ? Array.isArray(n.readBy) && n.readBy.some((id) => String(id) === String(userId))
+          : Boolean(n.isRead);
+      return {
+        ...n,
+        isRead: isReadForUser,
+      };
+    });
 
     const unreadCount = notifications.filter((n) => !n.isRead).length;
 

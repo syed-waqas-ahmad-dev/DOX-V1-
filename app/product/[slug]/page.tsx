@@ -350,20 +350,70 @@ export default function ProductDetailPage({ params }: ProductPageProps) {
               </div>
 
               <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
-                {product.sizes.map((sz) => (
-                  <button
-                    key={sz}
-                    onClick={() => setSelectedSize(sz)}
-                    className={`py-3 rounded-xl border text-xs font-bold transition-all text-center ${
-                      selectedSize === sz
-                        ? 'border-neutral-950 bg-neutral-950 text-white shadow'
-                        : 'border-neutral-200 hover:border-neutral-400 text-neutral-800'
-                    }`}
-                  >
-                    {sz}
-                  </button>
-                ))}
+                {product.sizes.map((sz) => {
+                  const match = product.variants?.find(
+                    (v) => v.size.trim().toLowerCase() === sz.trim().toLowerCase()
+                  );
+                  const szStock = match ? match.stock : (product.variants && product.variants.length > 0 ? 0 : product.stock);
+                  const isSoldOut = szStock <= 0;
+
+                  return (
+                    <button
+                      key={sz}
+                      type="button"
+                      disabled={isSoldOut}
+                      onClick={() => setSelectedSize(sz)}
+                      title={isSoldOut ? `Size ${sz} (Sold Out)` : `Size ${sz} (${szStock} in stock)`}
+                      className={`py-3 rounded-xl border text-xs font-bold transition-all text-center relative ${
+                        selectedSize === sz
+                          ? 'border-neutral-950 bg-neutral-950 text-white shadow'
+                          : isSoldOut
+                          ? 'border-neutral-200 bg-neutral-100 text-neutral-400 cursor-not-allowed line-through'
+                          : 'border-neutral-200 hover:border-neutral-400 text-neutral-800'
+                      }`}
+                    >
+                      {sz}
+                    </button>
+                  );
+                })}
               </div>
+
+              {/* Size-wise stock availability status */}
+              {selectedSize && (
+                <div className="text-xs pt-1">
+                  {(() => {
+                    const match = product.variants?.find(
+                      (v) => v.size.trim().toLowerCase() === selectedSize.trim().toLowerCase()
+                    );
+                    const currentStock = match
+                      ? match.stock
+                      : (product.variants && product.variants.length > 0 ? 0 : product.stock);
+
+                    if (currentStock <= 0) {
+                      return (
+                        <p className="text-red-600 font-semibold flex items-center gap-1.5">
+                          <span className="h-2 w-2 rounded-full bg-red-500" />
+                          Size {selectedSize} is currently Out of Stock
+                        </p>
+                      );
+                    }
+                    if (currentStock <= 5) {
+                      return (
+                        <p className="text-amber-600 font-semibold flex items-center gap-1.5">
+                          <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
+                          Low stock: Only {currentStock} pair{currentStock > 1 ? 's' : ''} left in Size {selectedSize}!
+                        </p>
+                      );
+                    }
+                    return (
+                      <p className="text-emerald-700 font-medium flex items-center gap-1.5">
+                        <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                        In Stock for Size {selectedSize} ({currentStock} available)
+                      </p>
+                    );
+                  })()}
+                </div>
+              )}
             </div>
 
             {/* Size Guide Modal (Inline Preview) */}
@@ -384,13 +434,34 @@ export default function ProductDetailPage({ params }: ProductPageProps) {
 
             {/* CTAs: Add to Bag + Wishlist */}
             <div className="flex items-center gap-3 pt-2">
-              <button
-                onClick={handleAddToCart}
-                className="flex-1 py-4 px-6 rounded-full bg-neutral-950 hover:bg-neutral-800 text-white text-xs font-black uppercase tracking-widest shadow-xl shadow-neutral-950/20 transition-all flex items-center justify-center gap-2"
-              >
-                <ShoppingBag className="h-4 w-4" />
-                <span>{isUrdu ? 'کارٹ میں شامل کریں' : 'Add to Bag'}</span>
-              </button>
+              {(() => {
+                const match = product.variants?.find(
+                  (v) => v.size.trim().toLowerCase() === selectedSize.trim().toLowerCase()
+                );
+                const currentStock = match
+                  ? match.stock
+                  : (product.variants && product.variants.length > 0 ? 0 : product.stock);
+                const isSoldOut = currentStock <= 0;
+
+                return (
+                  <button
+                    onClick={handleAddToCart}
+                    disabled={isSoldOut}
+                    className={`flex-1 py-4 px-6 rounded-full text-xs font-black uppercase tracking-widest shadow-xl transition-all flex items-center justify-center gap-2 ${
+                      isSoldOut
+                        ? 'bg-neutral-200 text-neutral-400 cursor-not-allowed shadow-none'
+                        : 'bg-neutral-950 hover:bg-neutral-800 text-white shadow-neutral-950/20'
+                    }`}
+                  >
+                    <ShoppingBag className="h-4 w-4" />
+                    <span>
+                      {isSoldOut
+                        ? (isUrdu ? 'اس سائز میں ختم ہو گیا' : `Size ${selectedSize} Out of Stock`)
+                        : (isUrdu ? 'کارٹ میں شامل کریں' : 'Add to Bag')}
+                    </span>
+                  </button>
+                );
+              })()}
 
               <button
                 onClick={(e) => {

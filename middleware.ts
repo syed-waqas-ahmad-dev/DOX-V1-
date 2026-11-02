@@ -68,8 +68,16 @@ export async function middleware(req: NextRequest) {
 
   // 2. Rider Delivery Panel Protection
   if (path.startsWith("/delivery")) {
-    if (!token) return NextResponse.redirect(new URL("/login", req.url));
-    if (role !== "rider") {
+    const hasRiderCookie = Boolean(req.cookies.get("ox_rider_session")?.value);
+    if (hasRiderCookie) {
+      return NextResponse.next();
+    }
+    // Allow unauthenticated visitors to view the rider terminal login page
+    if (!token) {
+      return NextResponse.next();
+    }
+    // Block customers and managers from accessing rider terminal
+    if (role !== "rider" && role !== "super_admin" && role !== "admin") {
       return NextResponse.redirect(new URL("/my-account", req.url));
     }
   }

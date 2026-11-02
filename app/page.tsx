@@ -43,15 +43,26 @@ export default function HomePage() {
   const isHydrated = useHydrated();
 
   useEffect(() => {
+    let isMounted = true;
     async function loadFeatured() {
       setLoadingFeatured(true);
-      const res = await getFeaturedProducts(8);
-      if (res.success && res.data) {
-        setFeaturedShoes(res.data);
+      try {
+        const res = await getFeaturedProducts(8);
+        if (isMounted && res?.success && res?.data) {
+          setFeaturedShoes(res.data);
+        }
+      } catch (err) {
+        console.warn('Unable to load featured products via server action:', err);
+      } finally {
+        if (isMounted) {
+          setLoadingFeatured(false);
+        }
       }
-      setLoadingFeatured(false);
     }
     loadFeatured();
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   const currentIsUrdu = isHydrated && isUrdu;

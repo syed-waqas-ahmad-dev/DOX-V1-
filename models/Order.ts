@@ -216,6 +216,15 @@ const orderSchema = new Schema<IOrder, OrderModelType>(
       type: Boolean,
       default: false,
     },
+    isRestocked: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    restockedAt: {
+      type: Date,
+      default: null,
+    },
     riderId: {
       type: Schema.Types.ObjectId,
       ref: 'DeliveryPartner',

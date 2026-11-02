@@ -8,9 +8,25 @@
 
 import { NextResponse, type NextRequest } from 'next/server';
 import crypto from 'crypto';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
 
 export async function POST(req: NextRequest) {
   try {
+    let session = null;
+    try {
+      session = await getServerSession(authOptions);
+    } catch {
+      session = null;
+    }
+
+    if (!session?.user) {
+      return NextResponse.json(
+        { error: 'Unauthorized: Authentication required to upload files.' },
+        { status: 401 }
+      );
+    }
+
     const formData = await req.formData();
     const file = formData.get('file') as File | null;
     const category = (formData.get('category') as string) || 'products';

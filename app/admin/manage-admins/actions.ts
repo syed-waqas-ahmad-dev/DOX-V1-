@@ -19,8 +19,6 @@ import { CreateAdminSchema, type CreateAdminInput } from '@/lib/validators/manag
 
 export type { CreateAdminInput } from '@/lib/validators/manage-admins';
 
-const PRIMARY_SUPER_ADMIN_EMAIL = 'ahmadsyedwaqas4@gmail.com';
-
 const DeleteAdminSchema = z.string().trim().min(1, 'Admin ID is required');
 
 export interface AdminUserItem {
@@ -45,9 +43,8 @@ export async function getAdminsList(): Promise<{
   try {
     const session = await getServerSession(authOptions);
     const sessionRole = (session?.user as { role?: string } | undefined)?.role;
-    const sessionEmail = session?.user?.email?.toLowerCase().trim();
 
-    if (sessionRole !== 'super_admin' && sessionEmail !== PRIMARY_SUPER_ADMIN_EMAIL) {
+    if (sessionRole !== 'super_admin') {
       return {
         success: false,
         error: 'Access Denied: Only super_admin can view the admins list.',
@@ -58,32 +55,8 @@ export async function getAdminsList(): Promise<{
 
     if (!isDatabaseConnected()) {
       return {
-        success: true,
-        data: [
-          {
-            _id: 'mock-super-admin',
-            name: 'Super Admin Ahmad Syed Waqas',
-            email: 'superadmin@oxshoes.pk',
-            role: 'super_admin',
-            permissions: [
-              'products:read',
-              'products:write',
-              'products:delete',
-              'orders:read',
-              'orders:update_status',
-              'orders:assign_courier',
-              'marketing:manage',
-              'finance:view_reports',
-            ],
-          },
-          {
-            _id: 'mock-admin-dawood',
-            name: 'Dawood Khan',
-            email: 'dawood@oxshoes.pk',
-            role: 'admin',
-            permissions: ['products:read', 'orders:read'],
-          },
-        ],
+        success: false,
+        error: 'Database connection is currently unavailable.',
       };
     }
 
@@ -146,9 +119,8 @@ export async function createAdmin(
     // 1. Access Control: Check session role === 'super_admin'
     const session = await getServerSession(authOptions);
     const sessionRole = (session?.user as { role?: string } | undefined)?.role;
-    const sessionEmail = session?.user?.email?.toLowerCase().trim();
 
-    if (sessionRole !== 'super_admin' && sessionEmail !== PRIMARY_SUPER_ADMIN_EMAIL) {
+    if (sessionRole !== 'super_admin') {
       return {
         success: false,
         error: 'Unauthorized: Only super_admin can create admin accounts.',
@@ -249,9 +221,9 @@ export async function createAdmin(
  * Access Control: Checks session for 'super_admin' role.
  * Validations & Safeguards:
  * 1. Validates adminId with Zod.
- * 2. Fetches target user to ensure existence and verifies email is NOT 'ahmadsyedwaqas4@gmail.com'.
- * 3. CRITICAL: The primary Super Admin ('ahmadsyedwaqas4@gmail.com') can NEVER be deleted.
- * 4. Prevents primary admin from deleting their own account.
+ * 2. Fetches target user to ensure existence and verifies role is NOT super_admin.
+ * 3. CRITICAL: Super Admin accounts can NEVER be deleted.
+ * 4. Prevents administrators from deleting their own account.
  * 5. Removes user from DB via User.findByIdAndDelete.
  * 6. Writes to AuditLog: action: 'DELETE_ADMIN', actorEmail: session.user.email, targetId: adminId, oldState: { email: targetUser.email }.
  * 7. Calls revalidatePath('/admin/manage-admins') to refresh UI.
@@ -264,9 +236,10 @@ export async function deleteAdmin(
     // 1. Access Control: Check session for 'super_admin' role
     const session = await getServerSession(authOptions);
     const sessionRole = (session?.user as { role?: string } | undefined)?.role;
+    const sessionUserId = (session?.user as { id?: string } | undefined)?.id;
     const sessionEmail = session?.user?.email?.toLowerCase().trim();
 
-    if (sessionRole !== 'super_admin' && sessionEmail !== PRIMARY_SUPER_ADMIN_EMAIL) {
+    if (sessionRole !== 'super_admin') {
       return {
         success: false,
         error: 'Unauthorized: Only super_admin can delete administrator accounts.',
@@ -301,7 +274,7 @@ export async function deleteAdmin(
       };
     }
 
-    // 3. Fetch target user to ensure they exist and email is NOT primary super admin
+    // 3. Fetch target user to ensure they exist
     const targetUser = await User.findById(validAdminId).select('_id email role name');
     if (!targetUser) {
       return {
@@ -310,21 +283,23 @@ export async function deleteAdmin(
       };
     }
 
-    const targetEmail = targetUser.email ? targetUser.email.toLowerCase().trim() : '';
-
-    // CRITICAL: The primary Super Admin ('ahmadsyedwaqas4@gmail.com') can NEVER be deleted.
-    if (targetEmail === PRIMARY_SUPER_ADMIN_EMAIL) {
+    // Role-based protection: Super Admin accounts can NEVER be deleted
+    if (targetUser.role === 'super_admin') {
       return {
         success: false,
-        error: 'CRITICAL: The primary Super Admin account (ahmadsyedwaqas4@gmail.com) can NEVER be deleted.',
+        error: 'Super Admin accounts are permanently protected and cannot be deleted.',
       };
     }
 
-    // Prevent primary admin from deleting their own account
-    if (sessionEmail === PRIMARY_SUPER_ADMIN_EMAIL && targetEmail === PRIMARY_SUPER_ADMIN_EMAIL) {
+    // Prevent administrators from deleting their own account
+    const targetEmail = targetUser.email ? targetUser.email.toLowerCase().trim() : '';
+    if (
+      (sessionUserId && sessionUserId === validAdminId) ||
+      (sessionEmail && sessionEmail === targetEmail)
+    ) {
       return {
         success: false,
-        error: 'Cannot delete the primary Super Admin account.',
+        error: 'Administrators cannot delete their own account.',
       };
     }
 

@@ -9,12 +9,9 @@ import { UserRole } from "@/types";
 const googleClientId = process.env.GOOGLE_CLIENT_ID?.trim();
 const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET?.trim();
 
-// Verified platform owners and super administrators
-const SUPER_ADMIN_EMAILS = [
-  "waqasahmad21103@gmail.com",
-  "ahmadsyedwaqas4@gmail.com",
-  "ali@ali.com",
-];
+if (process.env.NODE_ENV === "production" && !process.env.NEXTAUTH_SECRET?.trim()) {
+  throw new Error("[SECURITY FATAL] NEXTAUTH_SECRET environment variable is missing in production.");
+}
 
 export const authOptions: NextAuthOptions = {
   providers: [
@@ -41,32 +38,28 @@ export const authOptions: NextAuthOptions = {
         const user = await User.findOne({ email: cleanEmail }).select("+password +role");
 
         if (!user || !user.password) {
-          console.log("[AUTH] FAIL: User not found for email:", cleanEmail);
           return null;
         }
 
         const isValid = await bcrypt.compare(credentials.password, user.password);
         if (!isValid) {
-          console.log("[AUTH] FAIL: Invalid password for email:", cleanEmail);
           return null;
         }
 
-        const isSuperAdminEmail = SUPER_ADMIN_EMAILS.includes(cleanEmail);
-        const resolvedRole = isSuperAdminEmail ? "super_admin" : (user.role || "customer");
-
-        console.log("[AUTH] SUCCESS:", user.email, "| RESOLVED ROLE:", resolvedRole);
+        const resolvedRole = user.role || UserRole.CUSTOMER;
 
         return {
           id: user._id.toString(),
           email: user.email,
           name: user.name,
           role: resolvedRole,
+          isEmailVerified: user.isEmailVerified || false,
         };
       },
     }),
   ],
   session: { strategy: "jwt" },
-  secret: process.env.NEXTAUTH_SECRET || "ox-shoes-super-secret-key-2026",
+  secret: process.env.NEXTAUTH_SECRET,
   callbacks: {
     async signIn({ user, account, profile }) {
       if (account?.provider === "google") {
@@ -75,8 +68,12 @@ export const authOptions: NextAuthOptions = {
           const email = user.email?.toLowerCase().trim();
           if (!email) return false;
 
-          const isSuperAdminEmail = SUPER_ADMIN_EMAILS.includes(email);
-          const defaultRole = isSuperAdminEmail ? UserRole.SUPER_ADMIN : UserRole.CUSTOMER;
+          // Validate trusted Google OIDC email_verified claim
+          const isGoogleEmailVerified = Boolean((profile as any)?.email_verified);
+          if (!isGoogleEmailVerified) {
+            console.warn("[GOOGLE AUTH] Rejected Google sign-in: email_verified claim is missing or false.");
+            return false;
+          }
 
           let dbUser = (await User.findOne({ email }).lean()) as any;
           if (!dbUser) {
@@ -87,22 +84,16 @@ export const authOptions: NextAuthOptions = {
               email: email,
               image: user.image || undefined,
               googleId: profile?.sub || account.providerAccountId,
-              role: defaultRole,
+              role: UserRole.CUSTOMER,
               isEmailVerified: true,
               referralCode: myReferralCode,
             });
             dbUser = created;
-            console.log("[GOOGLE AUTH] Created new user:", email, "| ROLE:", defaultRole);
-          } else {
-            if (isSuperAdminEmail && dbUser.role !== UserRole.SUPER_ADMIN) {
-              await User.updateOne({ _id: dbUser._id }, { $set: { role: UserRole.SUPER_ADMIN } });
-              dbUser.role = UserRole.SUPER_ADMIN;
-            }
-            console.log("[GOOGLE AUTH] Existing user:", email, "| ROLE:", dbUser.role);
           }
 
           user.id = dbUser._id.toString();
-          (user as any).role = dbUser.role || defaultRole;
+          (user as any).role = dbUser.role || UserRole.CUSTOMER;
+          (user as any).isEmailVerified = Boolean(dbUser.isEmailVerified);
           return true;
         } catch (err) {
           console.error("[GOOGLE AUTH] Error during signIn callback:", err);
@@ -114,32 +105,33 @@ export const authOptions: NextAuthOptions = {
     async jwt({ token, user }) {
       if (user) {
         token.id = user.id;
-        token.role = (user as any).role || "customer";
+        token.role = (user as any).role || UserRole.CUSTOMER;
+        token.isEmailVerified = (user as any).isEmailVerified || false;
       }
 
-      // Safeguard: Ensure token.role is NEVER undefined or null
+      // Safeguard: Ensure token.role is verified against database
       if (!token.role && token.email) {
         try {
           await connectToDatabase();
           const cleanEmail = token.email.toLowerCase().trim();
-          const isSuper = SUPER_ADMIN_EMAILS.includes(cleanEmail);
           const dbUser = (await User.findOne({ email: cleanEmail }).lean()) as any;
-          token.role = isSuper ? "super_admin" : (dbUser?.role || "customer");
+          token.role = dbUser?.role || UserRole.CUSTOMER;
+          token.isEmailVerified = Boolean(dbUser?.isEmailVerified);
           if (dbUser?._id) token.id = dbUser._id.toString();
         } catch {
-          token.role = "customer";
+          token.role = UserRole.CUSTOMER;
+          token.isEmailVerified = false;
         }
       }
 
-      console.log("[JWT CALLBACK] Email:", token.email, "| Role:", token.role);
       return token;
     },
     async session({ session, token }) {
       if (session.user) {
         session.user.id = token.id as string;
-        session.user.role = (token.role as string) || "customer";
+        session.user.role = (token.role as string) || UserRole.CUSTOMER;
+        (session.user as any).isEmailVerified = !!token.isEmailVerified;
       }
-      console.log("[SESSION CALLBACK] User:", session.user?.email, "| Role:", session.user?.role);
       return session;
     },
   },

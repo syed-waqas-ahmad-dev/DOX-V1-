@@ -947,7 +947,7 @@ const mockStore: GlobalMockStore = global.__oxMockStore ?? {
   walletTransactions: [...INITIAL_WALLET_TRANSACTIONS],
   userWallets: {
     'user-demo-hamza': 400,
-    'ahmadsyedwaqas4@gmail.com': 1500,
+    'customer@oxshoes.pk': 1500,
     'default': 500,
   },
   banners: [

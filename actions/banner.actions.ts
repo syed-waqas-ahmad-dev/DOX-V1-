@@ -14,6 +14,26 @@ import { BannerPosition, type IBanner } from '@/types';
 import { MockDb } from '@/lib/db/mock-store';
 import { Types } from 'mongoose';
 import { revalidatePath } from 'next/cache';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
+import { isElevatedAdminRole } from '@/lib/auth-guard';
+
+/**
+ * Private helper to verify that the caller has elevated administrative clearance (SUPER_ADMIN or ADMIN).
+ * Obtains session exclusively from getServerSession(authOptions).
+ * MANAGER, RIDER, CUSTOMER, and unauthenticated callers are strictly denied.
+ */
+async function verifyBannerAdminAuth(): Promise<boolean> {
+  try {
+    const session = await getServerSession(authOptions);
+    if (!session?.user || !isElevatedAdminRole((session.user as { role?: string }).role)) {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 const DEFAULT_BANNERS: IBanner[] = [
   {
@@ -72,6 +92,10 @@ export async function getBanners(position?: BannerPosition): Promise<ActionResul
 
 export async function getAllAdminBanners(): Promise<ActionResult<IBanner[]>> {
   try {
+    if (!(await verifyBannerAdminAuth())) {
+      return errorResponse('Unauthorized: Administrative clearance required.');
+    }
+
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
@@ -85,12 +109,19 @@ export async function getAllAdminBanners(): Promise<ActionResult<IBanner[]>> {
 
     return successResponse(JSON.parse(JSON.stringify(banners)));
   } catch (error: unknown) {
+    if (!(await verifyBannerAdminAuth())) {
+      return errorResponse('Unauthorized: Administrative clearance required.');
+    }
     return successResponse(MockDb.getAllBanners());
   }
 }
 
 export async function createBanner(payload: Partial<IBanner>): Promise<ActionResult<IBanner>> {
   try {
+    if (!(await verifyBannerAdminAuth())) {
+      return errorResponse('Unauthorized: Administrative clearance required to create banners.');
+    }
+
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
@@ -117,6 +148,9 @@ export async function createBanner(payload: Partial<IBanner>): Promise<ActionRes
     revalidatePath('/');
     return successResponse(JSON.parse(JSON.stringify(doc)));
   } catch (error: unknown) {
+    if (!(await verifyBannerAdminAuth())) {
+      return errorResponse('Unauthorized: Administrative clearance required to create banners.');
+    }
     const created = MockDb.addBanner(payload);
     if (created) {
       revalidatePath('/admin');
@@ -132,6 +166,10 @@ export async function updateBanner(
   updates: Partial<IBanner>
 ): Promise<ActionResult<IBanner>> {
   try {
+    if (!(await verifyBannerAdminAuth())) {
+      return errorResponse('Unauthorized: Administrative clearance required to update banners.');
+    }
+
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
@@ -158,6 +196,9 @@ export async function updateBanner(
     revalidatePath('/');
     return successResponse(JSON.parse(JSON.stringify(doc)));
   } catch (error: unknown) {
+    if (!(await verifyBannerAdminAuth())) {
+      return errorResponse('Unauthorized: Administrative clearance required to update banners.');
+    }
     const updated = MockDb.updateBanner(bannerId, updates);
     if (updated) {
       revalidatePath('/admin');
@@ -170,6 +211,10 @@ export async function updateBanner(
 
 export async function deleteBanner(bannerId: string): Promise<ActionResult<{ deleted: boolean }>> {
   try {
+    if (!(await verifyBannerAdminAuth())) {
+      return errorResponse('Unauthorized: Administrative clearance required to delete banners.');
+    }
+
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
@@ -186,6 +231,9 @@ export async function deleteBanner(bannerId: string): Promise<ActionResult<{ del
 
     return successResponse({ deleted: true });
   } catch (error: unknown) {
+    if (!(await verifyBannerAdminAuth())) {
+      return errorResponse('Unauthorized: Administrative clearance required to delete banners.');
+    }
     const ok = MockDb.deleteBanner(bannerId);
     revalidatePath('/admin');
     revalidatePath('/');

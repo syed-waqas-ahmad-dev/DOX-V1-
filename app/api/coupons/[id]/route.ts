@@ -1,4 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
+import { isElevatedAdminRole } from '@/lib/auth-guard';
 import { connectToDatabase, isDatabaseConnected } from '@/lib/db/connect';
 import { Coupon } from '@/models/Coupon';
 import { MockDb } from '@/lib/db/mock-store';
@@ -11,6 +14,20 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    let session = null;
+    try {
+      session = await getServerSession(authOptions);
+    } catch {
+      session = null;
+    }
+
+    if (!session?.user || !isElevatedAdminRole((session.user as { role?: string }).role)) {
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized: Administrative clearance required to delete coupons.' },
+        { status: 401 }
+      );
+    }
+
     const { id } = await params;
 
     if (!id) {
@@ -42,6 +59,20 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    let session = null;
+    try {
+      session = await getServerSession(authOptions);
+    } catch {
+      session = null;
+    }
+
+    if (!session?.user || !isElevatedAdminRole((session.user as { role?: string }).role)) {
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized: Administrative clearance required to inspect coupons.' },
+        { status: 401 }
+      );
+    }
+
     const { id } = await params;
     await connectToDatabase();
 

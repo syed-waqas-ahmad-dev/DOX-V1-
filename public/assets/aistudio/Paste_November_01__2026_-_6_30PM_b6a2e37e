@@ -1,0 +1,442 @@
+{
+  "role": "Senior Full-Stack Next.js Engineer, Application Security Engineer, RBAC Architect, QA Automation Engineer, and Production Code Reviewer",
+  "project": "OX Shoes Pakistan",
+  "model_instruction": "Use your full reasoning and code-analysis capabilities. This is a consolidated Phase 4 completion task, not a request for a superficial audit or a small isolated fix. Inspect the actual repository, understand the existing architecture, implement only verified and necessary fixes, and validate the final result. Do not assume that previous AI reports are accurate.",
+  "primary_objective": "Complete the remaining Phase 4 security, authorization, data-isolation, TypeScript, and automated-testing work while preserving the existing OX Shoes Pakistan application, its UI, business logic, and role-based access-control architecture.",
+  "project_context": {
+    "framework": "Next.js App Router",
+    "language": "TypeScript",
+    "database": "MongoDB with Mongoose",
+    "authentication": "NextAuth",
+    "application": "OX Shoes Pakistan e-commerce platform",
+    "roles": [
+      "SUPER_ADMIN",
+      "ADMIN",
+      "MANAGER",
+      "RIDER",
+      "CUSTOMER"
+    ],
+    "guest_access": "Unauthenticated visitors may use explicitly permitted guest shopping functionality.",
+    "payment_model": "Cash on Delivery (COD)",
+    "service_constraints": [
+      "Prefer free and open-source solutions.",
+      "Do not introduce paid APIs or paid services.",
+      "Do not introduce an online payment gateway.",
+      "Do not introduce unnecessary third-party dependencies."
+    ]
+  },
+  "known_previous_audit_findings": {
+    "important_notice": "These are findings reported by a previous AI audit, not independently verified facts. Reinspect every item in the current restored repository before acting.",
+    "reported_completed_areas": [
+      "Cart guest and authenticated-user identity isolation.",
+      "Wishlist authentication and ownership checks.",
+      "Coupon administrative authorization."
+    ],
+    "reported_incomplete_areas": [
+      "Notification broadcast read-state isolation needs an authenticated two-user test.",
+      "Mock order ownership needs an authenticated ownership test.",
+      "TypeScript compilation reportedly fails.",
+      "The existing automated security suite uses mocked or in-memory behavior and does not establish real MongoDB integration correctness."
+    ],
+    "reported_otp_status": "Standalone OTP storage and API routes reportedly exist, but customer checkout does not use them.",
+    "reported_typescript_issues": [
+      "Potential duplicate or misplaced files under app/scripts and app/lib.",
+      "ObjectId versus string comparison in actions/order.actions.ts around the previously reported line 660.",
+      "Optional boolean type errors in scripts/verify-security-fixes.ts around previously reported lines 90 and 117."
+    ],
+    "reported_test_result": "A previous report claimed 18 passed and 0 failed using mocked or in-memory tests. This result must not be treated as independently verified.",
+    "reported_error_count_discrepancy": "A previous report claimed 14 TypeScript errors, but its listed categories appeared to total 15. Run the compiler and establish the actual baseline rather than relying on the reported count."
+  },
+  "non_negotiable_rules": [
+    "Inspect the current restored repository before modifying anything.",
+    "Do not assume previous audit reports, line numbers, test results, or code descriptions are accurate.",
+    "Do not replace existing application code with simplified examples or generic implementations.",
+    "Do not remove, weaken, bypass, or skip authentication or authorization checks to make tests pass.",
+    "Do not change existing role permissions without identifying a proven security defect and explaining the required behavior.",
+    "Do not change unrelated business logic, checkout behavior, order processing, product management, dashboard behavior, or application UI.",
+    "Do not replace existing components with plain HTML or simplified placeholder interfaces.",
+    "Do not remove existing features, styling, animations, responsive layouts, or component integrations.",
+    "Do not add AI features, dashboards, alerts, analytics, order-tracking features, or other unrequested functionality.",
+    "Do not install dependencies unless a dependency is demonstrably necessary and the user has explicitly authorized it.",
+    "Do not change environment variables, secrets, deployment configuration, or production infrastructure.",
+    "Do not connect to production databases or production services.",
+    "Do not use production customer data.",
+    "Do not create real orders, issue rewards, modify wallet balances, or perform financial operations.",
+    "Do not claim that a test, build, lint check, or visual verification passed unless it was actually executed and its result was observed.",
+    "Do not silently suppress TypeScript errors with any, ts-ignore, ts-expect-error, broad type assertions, or disabled compiler checks.",
+    "Do not fabricate test coverage or claim that mocked tests prove real MongoDB behavior.",
+    "Do not perform broad refactoring when a minimal targeted fix is sufficient."
+  ],
+  "execution_strategy": {
+    "phase_1_repository_and_checkpoint_verification": {
+      "objective": "Establish the actual current project state before making changes.",
+      "instructions": [
+        "Inspect the repository root, package.json, TypeScript configuration, Next.js configuration, relevant source files, and existing test scripts.",
+        "Identify the current branch and available Git status or diff information if Git is available.",
+        "Confirm that the current repository corresponds to the restored Phase 4 checkpoint as far as available evidence permits.",
+        "Do not claim that the checkpoint is verified if no reliable version-control or checkpoint evidence exists.",
+        "Identify the existing canonical implementation of cart identity, wishlist authorization, coupon authorization, notifications, mock order access, OTP routes, and authentication/session helpers.",
+        "Identify duplicate, misplaced, or accidentally copied source files without deleting anything yet.",
+        "Record the initial TypeScript, ESLint, test, and build status before changes.",
+        "If a command is unsafe, unavailable, or would access production services, do not execute it. Explain why."
+      ],
+      "required_output": [
+        "Repository and checkpoint status.",
+        "Actual baseline compiler errors with exact file paths and line numbers.",
+        "Existing test commands and their execution safety.",
+        "Relevant canonical source files.",
+        "A list of confirmed defects versus unverified suspicions."
+      ]
+    },
+    "phase_2_typescript_and_file_structure": {
+      "objective": "Resolve confirmed Phase 4 TypeScript and source-structure problems without damaging the App Router.",
+      "instructions": [
+        "Run npx tsc --noEmit and capture the complete actual output.",
+        "Inspect any reported files under app/scripts, app/lib, and other app directories.",
+        "Determine whether each file is an intentional App Router module, a legitimate route, an imported helper, or an accidental duplicate.",
+        "Do not delete or move a file merely because its name resembles another file.",
+        "Before removing or relocating a duplicate, inspect every import, export, route reference, test reference, and dependency on it.",
+        "Keep non-route utilities and test scripts outside app/ when required by the Next.js project architecture.",
+        "If a misplaced file causes a real compiler or App Router problem, correct it with the smallest safe change.",
+        "Inspect the ObjectId/string comparison in actions/order.actions.ts. Use a type-safe comparison consistent with the actual Mongoose schema and runtime data.",
+        "Preserve valid null and undefined handling. Do not introduce unsafe casts.",
+        "Inspect optional boolean arguments in scripts/verify-security-fixes.ts. Correct the test types without weakening the production authorization behavior.",
+        "Do not change tsconfig settings simply to hide existing errors."
+      ],
+      "acceptance_criteria": [
+        "npx tsc --noEmit exits successfully.",
+        "No compiler errors are hidden or suppressed.",
+        "No valid App Router routes or application modules are accidentally removed.",
+        "No unnecessary duplicate implementations remain if their duplication is confirmed and safely resolved."
+      ]
+    },
+    "phase_3_notification_read_state_isolation": {
+      "objective": "Verify that broadcast notification read state is isolated per authenticated user.",
+      "inspect": [
+        "types/index.ts",
+        "models/Notification.ts",
+        "app/api/notifications/list/route.ts",
+        "app/api/notifications/mark-read/route.ts",
+        "Relevant notification services, schemas, and tests."
+      ],
+      "required_behavior": [
+        "A broadcast notification can be visible to multiple eligible users.",
+        "When User A marks a broadcast notification as read, only User A's read state should change.",
+        "User B must continue to see that notification as unread until User B marks it as read.",
+        "An unauthenticated user must not modify another user's notification read state.",
+        "A user must not be able to submit another user's identity to mark notifications as read.",
+        "The authenticated session identity must be the source of the user ID.",
+        "The read operation should be idempotent.",
+        "Existing targeted notification behavior must remain correct."
+      ],
+      "legacy_data_review": [
+        "Inspect the meaning and use of any existing global isRead field.",
+        "Determine whether legacy global read state can incorrectly make a broadcast appear read for every user.",
+        "Do not remove or migrate legacy fields without establishing their compatibility requirements.",
+        "If a migration is necessary but cannot be safely performed in the current environment, report it rather than executing it."
+      ],
+      "required_tests": [
+        "Unauthenticated mark-read request is rejected.",
+        "User A marks a broadcast notification as read.",
+        "User A subsequently sees it as read.",
+        "User B subsequently sees the same broadcast notification as unread.",
+        "User B can independently mark it as read.",
+        "Repeated mark-read requests do not create duplicate user IDs in readBy.",
+        "User A cannot modify a notification belonging exclusively to User B."
+      ],
+      "test_quality": "Test the actual route-handler behavior where practical. If authentication, database, or Next.js dependencies are mocked, label the test as mocked. Do not describe a mock as a real database integration test."
+    },
+    "phase_4_mock_order_ownership": {
+      "objective": "Verify and preserve order ownership authorization in the existing mock-backed order retrieval flow.",
+      "inspect": [
+        "actions/order.actions.ts",
+        "Relevant authentication/session helpers.",
+        "MockDb implementation and order data types.",
+        "Existing order authorization tests."
+      ],
+      "required_behavior": [
+        "Unauthenticated callers cannot retrieve protected customer orders.",
+        "A CUSTOMER can retrieve their own orders.",
+        "A CUSTOMER cannot retrieve another customer's orders by supplying a different userId.",
+        "ADMIN and SUPER_ADMIN access must follow the existing documented application policy.",
+        "MANAGER and RIDER must not gain cross-customer access merely because they are authenticated.",
+        "Order identity comparisons must correctly handle the actual string or ObjectId representation used by the schema.",
+        "The query or filter must not leak another customer's order data."
+      ],
+      "required_tests": [
+        "Unauthenticated access is rejected.",
+        "Customer A can retrieve Customer A's orders.",
+        "Customer A cannot retrieve Customer B's orders.",
+        "Supplying another userId does not bypass session ownership.",
+        "An authorized elevated role follows the existing intended policy.",
+        "A non-privileged role cannot access another customer's orders."
+      ],
+      "important": "Do not invent new administrative permissions. Inspect the existing role policy and preserve it unless a confirmed security vulnerability requires a correction."
+    },
+    "phase_5_cart_wishlist_and_coupon_regression": {
+      "objective": "Ensure previously completed Phase 4 protections remain intact.",
+      "cart": [
+        "Authenticated users cannot impersonate another user by supplying userId.",
+        "Unauthenticated visitors can use only the supported guest cart identity.",
+        "Guest identity is generated or retrieved using the existing secure cookie mechanism.",
+        "Guest cart cookie retains its intended httpOnly, sameSite, secure-in-production, and expiration behavior.",
+        "One authenticated user's cart cannot be accessed by another user."
+      ],
+      "wishlist": [
+        "Wishlist operations require authentication.",
+        "The server derives ownership from the authenticated session.",
+        "A caller cannot access or modify another user's wishlist by submitting a userId."
+      ],
+      "coupons": [
+        "Protected coupon administration requires the correct elevated role.",
+        "CUSTOMER, RIDER, and unauthenticated callers cannot create, update, or delete administrative coupons.",
+        "Existing public coupon validation or application behavior must not be broken."
+      ],
+      "instructions": [
+        "Inspect the actual current implementations and tests.",
+        "Do not rewrite already-correct functionality.",
+        "Add or update only the regression tests necessary to verify the intended behavior.",
+        "Do not assume that an unauthorized 401 test alone proves authenticated ownership isolation."
+      ]
+    },
+    "phase_6_otp_scope_and_delivery_separation": {
+      "objective": "Prevent accidental introduction of customer OTP requirements and distinguish standalone OTP code from delivery verification.",
+      "instructions": [
+        "Inspect lib/otp-store.ts, app/api/otp/send/route.ts, app/api/otp/verify/route.ts, app/checkout/page.tsx, and relevant delivery actions.",
+        "The business requirement is COD checkout without mandatory customer OTP verification.",
+        "Do not wire OTP into customer checkout.",
+        "Do not block order placement because a customer has not completed OTP verification.",
+        "Do not add SMS gateways, paid verification APIs, or external OTP providers.",
+        "Determine whether standalone OTP routes are used by any legitimate application feature.",
+        "Inspect delivery OTP separately from customer checkout OTP.",
+        "Do not remove delivery OTP or rider verification without proving that it is unused and confirming its business impact.",
+        "Do not expose OTP values in API responses, logs, browser payloads, or client-visible error messages.",
+        "Preserve expiry, attempt limits, exact matching, and single-use behavior where the existing OTP feature legitimately requires them.",
+        "If an OTP route is genuinely unused, report it as an orphaned feature rather than deleting it automatically."
+      ],
+      "acceptance_criteria": [
+        "Customer COD checkout does not require OTP.",
+        "Existing delivery verification behavior is not accidentally broken.",
+        "No OTP secret is exposed through public responses."
+      ]
+    },
+    "phase_7_authentication_and_rbac_regression": {
+      "objective": "Verify that Phase 4 changes have not weakened the existing authentication and role-based authorization model.",
+      "instructions": [
+        "Inspect the current authoritative session and role definitions.",
+        "Verify that protected server actions and API routes derive identity from the authenticated session rather than trusting a client-supplied userId or role.",
+        "Verify that CUSTOMER cannot access administrative operations.",
+        "Verify that RIDER receives only its intended delivery-related permissions.",
+        "Verify that MANAGER permissions follow the actual application policy.",
+        "Verify that ADMIN and SUPER_ADMIN permissions remain distinct where the existing design requires it.",
+        "Verify that unauthenticated requests cannot reach protected data.",
+        "Check for alternate server actions or API routes that expose the same protected data without equivalent authorization.",
+        "Do not assume that middleware alone protects server actions or API routes.",
+        "Do not add hardcoded privileged email allowlists, email-substring role inference, fake ObjectIds, mock privileged sessions, or development authentication bypasses.",
+        "Do not change signup role assignment or super-admin provisioning unless a confirmed Phase 4 regression is found."
+      ],
+      "acceptance_criteria": [
+        "No client-controlled identity or role bypass is introduced.",
+        "Existing role hierarchy and intended permissions are preserved.",
+        "Server-side authorization remains authoritative."
+      ]
+    },
+    "phase_8_automated_security_test_suite": {
+      "objective": "Create a reliable and reproducible Phase 4 regression suite.",
+      "instructions": [
+        "Inspect the existing scripts/verify-security-fixes.ts and scripts/security-audit-test.ts before changing either.",
+        "Avoid duplicate test suites that assert the same behavior without adding value.",
+        "Keep test code outside the Next.js app route tree unless it is intentionally part of the application.",
+        "Use the existing test runner and installed dependencies.",
+        "Do not install a new testing framework unless the existing environment cannot support the required tests and the user has authorized it.",
+        "Use deterministic fixtures and isolated in-memory data for unit or mocked route-handler tests.",
+        "Restore mocks and test state after every test.",
+        "Do not use real customer data.",
+        "Do not use production credentials.",
+        "Do not issue wallet credits, rewards, coupons, or real orders.",
+        "Do not claim that in-memory tests establish MongoDB transactions, indexes, concurrency, or persistence behavior."
+      ],
+      "required_test_groups": [
+        "Cart guest identity and authenticated ownership.",
+        "Wishlist authentication and ownership.",
+        "Coupon administrative authorization.",
+        "Notification broadcast read-state isolation.",
+        "Mock order ownership and role access.",
+        "OTP expiry, attempts, single use, and response secrecy where the OTP feature is retained.",
+        "Authentication and authorization rejection for protected operations."
+      ],
+      "test_reporting": [
+        "Report the exact command executed.",
+        "Report the actual number of tests or assertions executed.",
+        "Report passed, failed, and skipped counts separately.",
+        "Identify which tests use mocks, in-memory fixtures, route handlers, or real services.",
+        "Never count a test as passing if it was skipped or not executed.",
+        "Do not report a historical test count as a current result."
+      ]
+    },
+    "phase_9_lint_build_and_application_preservation": {
+      "objective": "Validate the final code without sacrificing the existing application.",
+      "commands": [
+        "npx tsc --noEmit",
+        "Run the existing ESLint command from package.json.",
+        "Run the existing Phase 4 security test command.",
+        "Run npm run build if the environment and available configuration make it safe."
+      ],
+      "instructions": [
+        "Inspect package.json before selecting commands.",
+        "Do not invent package scripts.",
+        "Do not run destructive or production-connected commands.",
+        "Capture the actual command output and exit status.",
+        "If build requires unavailable environment variables or external services, report that limitation rather than fabricating success.",
+        "Do not claim that HTTP 200 proves the complete UI is visually correct.",
+        "If a development server is already running, do not start conflicting servers.",
+        "Where browser preview or screenshot verification is available, inspect the existing storefront and key dashboard pages before and after changes.",
+        "Verify that the original Header, Footer, navigation, product cards, cart, wishlist, checkout, dashboard, admin interface, responsive layout, styles, and animations remain present.",
+        "Do not redesign the UI or replace existing components."
+      ],
+      "acceptance_criteria": [
+        "TypeScript compilation succeeds.",
+        "ESLint succeeds for the relevant project scope.",
+        "The Phase 4 security suite succeeds.",
+        "Production build succeeds when safely executable.",
+        "No unexplained UI regression is introduced."
+      ]
+    },
+    "phase_10_final_review": {
+      "objective": "Perform a final evidence-based review of all Phase 4 work.",
+      "instructions": [
+        "Review every modified file and the final diff.",
+        "Confirm that changes are limited to the required Phase 4 fixes and tests.",
+        "Identify accidental or unrelated modifications.",
+        "Verify that no secrets, credentials, or sensitive customer data appear in logs or changed files.",
+        "Identify remaining risks that cannot be resolved through safe local tests.",
+        "Do not claim real MongoDB concurrency or transaction correctness without an isolated staging integration test.",
+        "Do not claim production behavior has been verified through local mocks."
+      ]
+    }
+  },
+  "implementation_policy": {
+    "fix_mode": "Implement confirmed, necessary, minimal fixes after completing the initial inspection.",
+    "preserve_existing_architecture": true,
+    "preserve_existing_ui": true,
+    "preserve_existing_rbac": true,
+    "preserve_existing_business_logic": true,
+    "avoid_unrelated_refactoring": true,
+    "avoid_new_paid_services": true,
+    "avoid_unnecessary_dependencies": true,
+    "no_production_database_access": true,
+    "no_financial_operations": true,
+    "no_customer_checkout_otp": true,
+    "no_unrequested_features": true,
+    "if_uncertain": "Do not guess or make a risky change. Record the uncertainty, explain what evidence is missing, and continue with independently safe tasks."
+  },
+  "required_final_report": {
+    "format": "Structured engineering report with evidence.",
+    "sections": [
+      {
+        "title": "1. Executive Summary",
+        "requirements": [
+          "State whether Phase 4 is complete, partially complete, or blocked.",
+          "Summarize only verified results."
+        ]
+      },
+      {
+        "title": "2. Initial Baseline",
+        "requirements": [
+          "Initial TypeScript result.",
+          "Initial ESLint result.",
+          "Initial security-test result.",
+          "Initial build result if executed.",
+          "Repository/checkpoint evidence."
+        ]
+      },
+      {
+        "title": "3. Findings and Fixes",
+        "requirements": [
+          "For every finding, classify it as Confirmed Defect, Correct Existing Behavior, Runtime/Environment Limitation, or Unverified.",
+          "Provide exact file paths and relevant line numbers.",
+          "Explain the defect and the actual fix, if implemented."
+        ]
+      },
+      {
+        "title": "4. RBAC and Data Isolation Matrix",
+        "requirements": [
+          "Show relevant roles against protected operations.",
+          "Use PASS, FAIL, or UNVERIFIED.",
+          "Explain the evidence supporting each status.",
+          "Do not invent permissions."
+        ]
+      },
+      {
+        "title": "5. Notification Isolation Results",
+        "requirements": [
+          "Show the User A/User B broadcast read-state test results.",
+          "Explain legacy isRead behavior if relevant."
+        ]
+      },
+      {
+        "title": "6. Order Ownership Results",
+        "requirements": [
+          "Show authenticated ownership and cross-customer denial results.",
+          "Identify any role-specific limitations."
+        ]
+      },
+      {
+        "title": "7. Cart, Wishlist, and Coupon Regression",
+        "requirements": [
+          "Report the actual regression tests executed.",
+          "Separate route-level tests from helper-level tests."
+        ]
+      },
+      {
+        "title": "8. OTP Scope",
+        "requirements": [
+          "Confirm whether customer checkout requires OTP.",
+          "Report the status of standalone OTP routes.",
+          "Report delivery OTP separately."
+        ]
+      },
+      {
+        "title": "9. Test Execution Evidence",
+        "requirements": [
+          "Exact commands.",
+          "Actual output or concise captured result.",
+          "Passed, failed, and skipped counts.",
+          "Mocked versus real integration classification."
+        ]
+      },
+      {
+        "title": "10. TypeScript, ESLint, and Build",
+        "requirements": [
+          "Actual final exit status for each command.",
+          "Remaining errors with exact locations.",
+          "Do not claim success for commands that were not executed."
+        ]
+      },
+      {
+        "title": "11. Files Changed",
+        "requirements": [
+          "List every modified, created, moved, or deleted file.",
+          "Explain why each change was necessary.",
+          "Report unrelated changes if found."
+        ]
+      },
+      {
+        "title": "12. Remaining Risks and Next Action",
+        "requirements": [
+          "List unresolved issues.",
+          "Identify tests requiring an isolated staging database.",
+          "State the single most important next action."
+        ]
+      }
+    ],
+    "final_status_labels": [
+      "PASS",
+      "FAIL",
+      "UNVERIFIED",
+      "NOT APPLICABLE"
+    ],
+    "truthfulness_requirement": "A successful mocked test is not proof of a real database integration. A successful TypeScript check is not proof of runtime correctness. A successful HTTP response is not proof of visual correctness. Clearly distinguish all forms of evidence."
+  },
+  "completion_condition": "Stop after the final engineering report. Do not start a new phase, deploy the application, connect to production, or introduce additional features."
+}

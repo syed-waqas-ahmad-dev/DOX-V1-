@@ -16,6 +16,9 @@ import { ProductCategory, ProductSubCategory, type IProduct, type ProductFilters
 import { MockDb } from '@/lib/db/mock-store';
 import { revalidatePath } from 'next/cache';
 import type { Filter } from 'mongodb';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
+import { isElevatedAdminRole } from '@/lib/auth-guard';
 
 export async function getProducts(filters: ProductFilters = {}): Promise<
   ActionResult<{
@@ -203,8 +206,29 @@ export async function searchProducts(queryStr: string): Promise<
   }
 }
 
+/**
+ * Private helper to verify that the caller has elevated administrative clearance (SUPER_ADMIN or ADMIN).
+ * Obtains session exclusively from getServerSession(authOptions).
+ * MANAGER, RIDER, CUSTOMER, and unauthenticated callers are strictly denied.
+ */
+async function verifyProductAdminAuth(): Promise<boolean> {
+  try {
+    const session = await getServerSession(authOptions);
+    if (!session?.user || !isElevatedAdminRole((session.user as { role?: string }).role)) {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function getAllAdminProducts(search?: string): Promise<ActionResult<IProduct[]>> {
   try {
+    if (!(await verifyProductAdminAuth())) {
+      return errorResponse('Unauthorized: Administrative clearance required.');
+    }
+
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
@@ -221,6 +245,9 @@ export async function getAllAdminProducts(search?: string): Promise<ActionResult
     const products = await Product.find(query).sort({ createdAt: -1 }).limit(100).lean();
     return successResponse(JSON.parse(JSON.stringify(products)));
   } catch (error: unknown) {
+    if (!(await verifyProductAdminAuth())) {
+      return errorResponse('Unauthorized: Administrative clearance required.');
+    }
     const res = MockDb.getProducts({ limit: 100, search });
     return successResponse(res.products);
   }
@@ -228,7 +255,28 @@ export async function getAllAdminProducts(search?: string): Promise<ActionResult
 
 export async function createProduct(payload: Partial<IProduct>): Promise<ActionResult<IProduct>> {
   try {
+    if (!(await verifyProductAdminAuth())) {
+      return errorResponse('Unauthorized: Administrative clearance required to create products.');
+    }
+
     await connectToDatabase();
+
+    // Validate variants if provided
+    if (payload.variants && payload.variants.length > 0) {
+      const seen = new Set<string>();
+      for (const v of payload.variants) {
+        if (typeof v.stock !== 'number' || v.stock < 0) {
+          return errorResponse(`Variant stock for Size ${v.size} cannot be negative.`);
+        }
+        const key = `${v.size.trim().toLowerCase()}_${(v.color || '').trim().toLowerCase()}`;
+        if (seen.has(key)) {
+          return errorResponse(`Duplicate variant detected for Size ${v.size} (${v.color || 'Standard'}).`);
+        }
+        seen.add(key);
+      }
+      // Authoritative aggregate stock calculation
+      payload.stock = payload.variants.reduce((sum, v) => sum + Math.max(0, v.stock || 0), 0);
+    }
 
     const shortDesc =
       payload.shortDescription ||
@@ -277,6 +325,9 @@ export async function createProduct(payload: Partial<IProduct>): Promise<ActionR
 
     return successResponse(plainDoc);
   } catch (error: unknown) {
+    if (!(await verifyProductAdminAuth())) {
+      return errorResponse('Unauthorized: Administrative clearance required to create products.');
+    }
     const fallbackProd = MockDb.addProduct(payload);
     if (fallbackProd) {
       revalidatePath('/shop');
@@ -293,7 +344,28 @@ export async function updateProduct(
   updates: Partial<IProduct>
 ): Promise<ActionResult<IProduct>> {
   try {
+    if (!(await verifyProductAdminAuth())) {
+      return errorResponse('Unauthorized: Administrative clearance required to update products.');
+    }
+
     await connectToDatabase();
+
+    // If variants are updated, validate integrity and re-synchronize aggregate stock
+    if (updates.variants && Array.isArray(updates.variants)) {
+      const seen = new Set<string>();
+      for (const v of updates.variants) {
+        if (typeof v.stock !== 'number' || v.stock < 0) {
+          return errorResponse(`Variant stock for Size ${v.size} cannot be negative.`);
+        }
+        const key = `${v.size.trim().toLowerCase()}_${(v.color || '').trim().toLowerCase()}`;
+        if (seen.has(key)) {
+          return errorResponse(`Duplicate variant detected for Size ${v.size} (${v.color || 'Standard'}).`);
+        }
+        seen.add(key);
+      }
+      // Re-synchronize parent stock to equal exact sum of valid variants
+      updates.stock = updates.variants.reduce((sum, v) => sum + Math.max(0, v.stock || 0), 0);
+    }
 
     if (!isDatabaseConnected()) {
       const updated = MockDb.updateProduct(productId, updates);
@@ -324,6 +396,9 @@ export async function updateProduct(
 
     return successResponse(JSON.parse(JSON.stringify(doc)));
   } catch (error: unknown) {
+    if (!(await verifyProductAdminAuth())) {
+      return errorResponse('Unauthorized: Administrative clearance required to update products.');
+    }
     const updated = MockDb.updateProduct(productId, updates);
     if (updated) {
       revalidatePath('/shop');
@@ -335,8 +410,73 @@ export async function updateProduct(
   }
 }
 
+/**
+ * Granular size-level inventory adjustment by authorized administrators.
+ * Updates target variant stock and automatically re-synchronizes parent aggregate stock.
+ */
+export async function updateVariantStock(
+  productId: string,
+  size: string,
+  newStock: number,
+  color?: string
+): Promise<ActionResult<IProduct>> {
+  try {
+    if (!(await verifyProductAdminAuth())) {
+      return errorResponse('Unauthorized: Administrative clearance required to adjust variant inventory.');
+    }
+
+    if (typeof newStock !== 'number' || newStock < 0 || !Number.isInteger(newStock)) {
+      return errorResponse('Variant stock must be a non-negative integer.');
+    }
+
+    await connectToDatabase();
+    if (!isDatabaseConnected()) {
+      return errorResponse('Database connection unavailable for variant stock adjustment.');
+    }
+
+    const product = await Product.findById(productId);
+    if (!product) return errorResponse('Product not found.');
+
+    if (!product.variants || product.variants.length === 0) {
+      // Product has no variants: update parent stock directly
+      product.stock = newStock;
+      await product.save();
+      revalidatePath('/shop');
+      revalidatePath('/admin');
+      return successResponse(JSON.parse(JSON.stringify(product)));
+    }
+
+    const variantIndex = product.variants.findIndex(
+      (v) =>
+        v.size.trim().toLowerCase() === size.trim().toLowerCase() &&
+        (!color || v.color.trim().toLowerCase() === color.trim().toLowerCase())
+    );
+
+    if (variantIndex === -1) {
+      return errorResponse(`Variant with Size ${size} not found for this product.`);
+    }
+
+    // Update variant stock and synchronize aggregate parent stock
+    product.variants[variantIndex].stock = newStock;
+    product.stock = product.variants.reduce((sum, v) => sum + Math.max(0, v.stock || 0), 0);
+    await product.save();
+
+    revalidatePath('/shop');
+    revalidatePath('/admin');
+    revalidatePath('/');
+
+    return successResponse(JSON.parse(JSON.stringify(product)));
+  } catch (error: unknown) {
+    return handleActionError(error);
+  }
+}
+
 export async function deleteProduct(productId: string): Promise<ActionResult<{ deleted: boolean }>> {
   try {
+    if (!(await verifyProductAdminAuth())) {
+      return errorResponse('Unauthorized: Administrative clearance required to delete products.');
+    }
+
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
@@ -356,6 +496,9 @@ export async function deleteProduct(productId: string): Promise<ActionResult<{ d
 
     return successResponse({ deleted: true });
   } catch (error: unknown) {
+    if (!(await verifyProductAdminAuth())) {
+      return errorResponse('Unauthorized: Administrative clearance required to delete products.');
+    }
     const ok = MockDb.deleteProduct(productId);
     if (ok) {
       revalidatePath('/shop');

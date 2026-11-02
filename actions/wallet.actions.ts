@@ -3,6 +3,8 @@
 /**
  * @file actions/wallet.actions.ts
  * @description Customer store credit wallet & transaction ledger server actions.
+ * Enforces strict role-based authorization (CUSTOMER/MANAGER restricted to self,
+ * cross-customer access strictly limited to SUPER_ADMIN/ADMIN).
  * Strict TypeScript: ZERO `any`.
  */
 
@@ -14,39 +16,78 @@ import { handleActionError } from '@/lib/error-handler';
 import { MockDb } from '@/lib/db/mock-store';
 import { TransactionStatus, type IWalletTransaction } from '@/types';
 import { Types } from 'mongoose';
-import { revalidatePath } from 'next/cache';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
+import { isElevatedAdminRole } from '@/lib/auth-guard';
+import {
+  addCreditInternal,
+  deductCreditInternal,
+} from '@/lib/services/wallet.service';
 
 /**
- * Retrieve user's current wallet balance
+ * Retrieve user's current wallet balance.
+ * Requires authenticated session. Non-elevated roles (CUSTOMER, MANAGER) are strictly
+ * restricted to their own wallet balance. Only SUPER_ADMIN and ADMIN may query another user.
  */
-export async function getWalletBalance(userId: string): Promise<ActionResult<{ balance: number }>> {
+export async function getWalletBalance(userId?: string): Promise<ActionResult<{ balance: number }>> {
+  let targetUserId = userId;
   try {
-    if (!userId) {
-      return successResponse({ balance: 0 });
+    let session = null;
+    try {
+      session = await getServerSession(authOptions);
+    } catch {
+      session = null;
+    }
+
+    const sessionUser = session?.user as { id?: string; email?: string; role?: string } | undefined;
+
+    if (!sessionUser) {
+      return errorResponse('Unauthenticated: Please sign in to view wallet balance.');
+    }
+
+    const isElevatedAdmin = isElevatedAdminRole(sessionUser.role);
+
+    // Reject non-elevated callers (CUSTOMER, MANAGER) attempting cross-customer access
+    if (userId && !isElevatedAdmin && userId !== sessionUser.id) {
+      return errorResponse("Unauthorized: Cannot access another customer's wallet balance.");
+    }
+
+    // Admins can query target userId; non-admins strictly default to session user ID
+    targetUserId = isElevatedAdmin && userId ? userId.trim() : sessionUser.id;
+
+    if (!targetUserId || typeof targetUserId !== 'string' || !targetUserId.trim()) {
+      return errorResponse('Invalid session: Missing user identifier.');
+    }
+
+    const cleanTargetId = targetUserId.trim();
+    if (!Types.ObjectId.isValid(cleanTargetId)) {
+      return errorResponse('Invalid request: Target user identifier must be a valid MongoDB ID.');
     }
 
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
-      const balance = MockDb.getWalletBalance(userId);
+      const balance = MockDb.getWalletBalance(cleanTargetId);
       return successResponse({ balance });
     }
 
-    const user = await User.findById(userId).select('walletBalance').lean();
+    const user = await User.findById(cleanTargetId).select('walletBalance').lean();
     if (!user) {
-      const balance = MockDb.getWalletBalance(userId);
+      const balance = MockDb.getWalletBalance(cleanTargetId);
       return successResponse({ balance });
     }
 
     return successResponse({ balance: user.walletBalance || 0 });
   } catch (error: unknown) {
-    const balance = MockDb.getWalletBalance(userId);
+    const balance = MockDb.getWalletBalance(targetUserId || '');
     return successResponse({ balance });
   }
 }
 
 /**
- * Add credit to user's wallet and record in transaction ledger
+ * Add credit to user's wallet and record in transaction ledger.
+ * When invoked directly as a Server Action, requires SUPER_ADMIN or ADMIN authorization.
+ * Internal server-to-server callers (referrals, orders) use addCreditInternal directly.
  */
 export async function addCredit(
   userId: string,
@@ -56,64 +97,27 @@ export async function addCredit(
   status: TransactionStatus = TransactionStatus.COMPLETED
 ): Promise<ActionResult<{ balance: number; transaction: IWalletTransaction }>> {
   try {
-    if (amount <= 0) {
-      return errorResponse('Credit amount must be greater than zero.');
+    let session = null;
+    try {
+      session = await getServerSession(authOptions);
+    } catch {
+      session = null;
     }
 
-    await connectToDatabase();
-
-    if (!isDatabaseConnected()) {
-      const res = MockDb.adjustWallet(userId, amount, 'credit', description, referenceId);
-      revalidatePath('/dashboard/referrals');
-      revalidatePath('/admin');
-      return successResponse({
-        balance: res.balance,
-        transaction: res.tx as IWalletTransaction,
-      });
+    if (!session?.user || !isElevatedAdminRole((session.user as { role?: string }).role)) {
+      return errorResponse('Unauthorized: Administrative clearance required to credit customer wallets.');
     }
 
-    const user = await User.findById(userId);
-    if (!user) {
-      const res = MockDb.adjustWallet(userId, amount, 'credit', description, referenceId);
-      return successResponse({
-        balance: res.balance,
-        transaction: res.tx as IWalletTransaction,
-      });
-    }
-
-    const newBalance = (user.walletBalance || 0) + amount;
-    user.walletBalance = newBalance;
-    await user.save();
-
-    const transaction = await WalletTransaction.create({
-      userId: new Types.ObjectId(userId),
-      amount,
-      type: 'credit',
-      description,
-      referenceId: referenceId || undefined,
-      balanceAfter: newBalance,
-      status,
-    });
-
-
-    revalidatePath('/dashboard/referrals');
-    revalidatePath('/admin');
-
-    return successResponse({
-      balance: newBalance,
-      transaction: JSON.parse(JSON.stringify(transaction)),
-    });
+    return await addCreditInternal(userId, amount, description, referenceId, status);
   } catch (error: unknown) {
-    const res = MockDb.adjustWallet(userId, amount, 'credit', description, referenceId);
-    return successResponse({
-      balance: res.balance,
-      transaction: res.tx as IWalletTransaction,
-    });
+    return handleActionError(error);
   }
 }
 
 /**
- * Deduct credit from user's wallet atomically on checkout
+ * Deduct credit from user's wallet atomically on checkout.
+ * When invoked directly as a Server Action, requires SUPER_ADMIN or ADMIN authorization.
+ * Internal server-to-server callers (checkout) use deductCreditInternal directly.
  */
 export async function deductCredit(
   userId: string,
@@ -122,97 +126,93 @@ export async function deductCredit(
   referenceId?: string
 ): Promise<ActionResult<{ balance: number; transaction: IWalletTransaction }>> {
   try {
-    if (amount <= 0) {
-      return errorResponse('Deduct amount must be greater than zero.');
+    let session = null;
+    try {
+      session = await getServerSession(authOptions);
+    } catch {
+      session = null;
     }
 
-    await connectToDatabase();
-
-    if (!isDatabaseConnected()) {
-      const current = MockDb.getWalletBalance(userId);
-      if (current < amount) {
-        return errorResponse(`Insufficient wallet balance. Available: PKR ${current}`);
-      }
-      const res = MockDb.adjustWallet(userId, amount, 'debit', description, referenceId);
-      revalidatePath('/dashboard/referrals');
-      revalidatePath('/admin');
-      return successResponse({
-        balance: res.balance,
-        transaction: res.tx as IWalletTransaction,
-      });
+    if (!session?.user || !isElevatedAdminRole((session.user as { role?: string }).role)) {
+      return errorResponse('Unauthorized: Administrative clearance required to deduct customer credits.');
     }
 
-    const user = await User.findById(userId);
-    if (!user) {
-      const res = MockDb.adjustWallet(userId, amount, 'debit', description, referenceId);
-      return successResponse({
-        balance: res.balance,
-        transaction: res.tx as IWalletTransaction,
-      });
-    }
-
-    if ((user.walletBalance || 0) < amount) {
-      return errorResponse(`Insufficient wallet balance. Available: PKR ${user.walletBalance || 0}`);
-    }
-
-    const newBalance = Math.max(0, (user.walletBalance || 0) - amount);
-    user.walletBalance = newBalance;
-    await user.save();
-
-    const transaction = await WalletTransaction.create({
-      userId: new Types.ObjectId(userId),
-      amount,
-      type: 'debit',
-      description,
-      referenceId: referenceId || undefined,
-      balanceAfter: newBalance,
-    });
-
-    revalidatePath('/dashboard/referrals');
-    revalidatePath('/admin');
-
-    return successResponse({
-      balance: newBalance,
-      transaction: JSON.parse(JSON.stringify(transaction)),
-    });
+    return await deductCreditInternal(userId, amount, description, referenceId);
   } catch (error: unknown) {
     return handleActionError(error);
   }
 }
 
 /**
- * Retrieve transaction history for a user
+ * Retrieve transaction history for a user.
+ * Requires authenticated session. Non-elevated roles (CUSTOMER, MANAGER) are strictly
+ * restricted to their own ledger. Only SUPER_ADMIN and ADMIN may inspect another user's ledger.
  */
 export async function getWalletTransactions(
-  userId: string
+  userId?: string
 ): Promise<ActionResult<IWalletTransaction[]>> {
+  let targetUserId = userId;
   try {
+    let session = null;
+    try {
+      session = await getServerSession(authOptions);
+    } catch {
+      session = null;
+    }
+
+    const sessionUser = session?.user as { id?: string; email?: string; role?: string } | undefined;
+
+    if (!sessionUser) {
+      return errorResponse('Unauthenticated: Please sign in to view transaction history.');
+    }
+
+    const isElevatedAdmin = isElevatedAdminRole(sessionUser.role);
+
+    // Reject non-elevated callers (CUSTOMER, MANAGER) attempting cross-customer access
+    if (userId && !isElevatedAdmin && userId !== sessionUser.id) {
+      return errorResponse("Unauthorized: Cannot access another customer's transaction ledger.");
+    }
+
+    targetUserId = isElevatedAdmin && userId ? userId.trim() : sessionUser.id;
+
+    if (!targetUserId || typeof targetUserId !== 'string' || !targetUserId.trim()) {
+      return errorResponse('Invalid session: Missing user identifier.');
+    }
+
+    const cleanTargetId = targetUserId.trim();
+    if (!Types.ObjectId.isValid(cleanTargetId)) {
+      return errorResponse('Invalid request: Target user identifier must be a valid MongoDB ID.');
+    }
+
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
-      const txs = MockDb.getWalletTransactions(userId);
+      const txs = MockDb.getWalletTransactions(cleanTargetId);
       return successResponse(txs as IWalletTransaction[]);
     }
 
-    const txs = await WalletTransaction.find({ userId: new Types.ObjectId(userId) })
+    const txs = await WalletTransaction.find({
+      userId: new Types.ObjectId(cleanTargetId),
+    })
       .sort({ createdAt: -1 })
       .limit(50)
       .lean();
 
     if (!txs || txs.length === 0) {
-      const mockTxs = MockDb.getWalletTransactions(userId);
+      const mockTxs = MockDb.getWalletTransactions(cleanTargetId);
       return successResponse(mockTxs as IWalletTransaction[]);
     }
 
     return successResponse(JSON.parse(JSON.stringify(txs)));
   } catch (error: unknown) {
-    const mockTxs = MockDb.getWalletTransactions(userId);
+    const mockTxs = MockDb.getWalletTransactions(targetUserId || '');
     return successResponse(mockTxs as IWalletTransaction[]);
   }
 }
 
 /**
- * Admin: Manually adjust customer wallet credit or debit
+ * Admin: Manually adjust customer wallet credit or debit.
+ * Strictly limited to SUPER_ADMIN and ADMIN. Validates amount, target ID, and reason server-side.
  */
 export async function adminAdjustWallet(
   userId: string,
@@ -221,10 +221,43 @@ export async function adminAdjustWallet(
   reason: string
 ): Promise<ActionResult<{ balance: number; transaction: IWalletTransaction }>> {
   try {
+    let session = null;
+    try {
+      session = await getServerSession(authOptions);
+    } catch {
+      session = null;
+    }
+
+    if (!session?.user || !isElevatedAdminRole((session.user as { role?: string }).role)) {
+      return errorResponse('Unauthorized: Administrative clearance required.');
+    }
+
+    if (!userId || typeof userId !== 'string' || !userId.trim()) {
+      return errorResponse('Invalid target user identifier.');
+    }
+    const cleanUserId = userId.trim();
+    if (!Types.ObjectId.isValid(cleanUserId)) {
+      return errorResponse('Invalid target user identifier: must be a valid MongoDB ID.');
+    }
+
+    if (typeof amount !== 'number' || isNaN(amount) || !isFinite(amount) || amount <= 0 || amount > 100000) {
+      return errorResponse('Invalid adjustment amount: must be a positive number up to PKR 100,000.');
+    }
+
+    if (type !== 'credit' && type !== 'debit') {
+      return errorResponse("Invalid adjustment type: must be 'credit' or 'debit'.");
+    }
+
+    if (!reason || typeof reason !== 'string' || reason.trim().length < 3) {
+      return errorResponse('Adjustment reason must be at least 3 characters.');
+    }
+
+    const referenceId = `ADJ-${Date.now()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+
     if (type === 'credit') {
-      return addCredit(userId, amount, `Admin adjustment: ${reason}`);
+      return await addCreditInternal(cleanUserId, amount, `Admin adjustment: ${reason.trim()}`, referenceId);
     } else {
-      return deductCredit(userId, amount, `Admin deduction: ${reason}`);
+      return await deductCreditInternal(cleanUserId, amount, `Admin deduction: ${reason.trim()}`, referenceId);
     }
   } catch (error: unknown) {
     return handleActionError(error);
@@ -232,7 +265,8 @@ export async function adminAdjustWallet(
 }
 
 /**
- * Admin: Get overview of all wallet ledger transactions
+ * Admin: Get overview of all wallet ledger transactions.
+ * Strictly limited to SUPER_ADMIN and ADMIN.
  */
 export async function getAllWalletOverviewAdmin(): Promise<
   ActionResult<{
@@ -242,6 +276,17 @@ export async function getAllWalletOverviewAdmin(): Promise<
   }>
 > {
   try {
+    let session = null;
+    try {
+      session = await getServerSession(authOptions);
+    } catch {
+      session = null;
+    }
+
+    if (!session?.user || !isElevatedAdminRole((session.user as { role?: string }).role)) {
+      return errorResponse('Unauthorized: Administrative clearance required.');
+    }
+
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
@@ -265,13 +310,6 @@ export async function getAllWalletOverviewAdmin(): Promise<
       transactions: JSON.parse(JSON.stringify(txs)),
     });
   } catch (error: unknown) {
-    const txs = MockDb.getWalletTransactions();
-    const credits = txs.filter((t) => t.type === 'credit').reduce((s, t) => s + t.amount, 0);
-    const debits = txs.filter((t) => t.type === 'debit').reduce((s, t) => s + t.amount, 0);
-    return successResponse({
-      totalCreditsGiven: credits,
-      totalDebits: debits,
-      transactions: txs as IWalletTransaction[],
-    });
+    return handleActionError(error);
   }
 }

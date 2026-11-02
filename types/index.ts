@@ -390,6 +390,8 @@ export interface IOrder {
   adminNotes?: string;
   invoiceUrl?: string;
   archived?: boolean;
+  isRestocked?: boolean;
+  restockedAt?: Date | null;
   version?: number;
   riderId?: Types.ObjectId | string | null;
   riderStatus?: 'pending' | 'assigned' | 'out_for_delivery' | 'delivered' | 'failed';
@@ -492,7 +494,9 @@ export interface ICoupon {
 export interface ICouponUsage {
   _id: Types.ObjectId;
   couponId: Types.ObjectId;
-  userId: Types.ObjectId;
+  userId?: Types.ObjectId;
+  guestEmail?: string;
+  guestPhone?: string;
   orderId: Types.ObjectId;
   discountApplied: number;
   usedAt: Date;
@@ -504,13 +508,14 @@ export interface ICouponUsage {
  * Push/in-app notification document
  */
 export interface INotification {
-  _id: Types.ObjectId;
-  userId: Types.ObjectId;
+  _id: Types.ObjectId | string;
+  userId: Types.ObjectId | string;
   type: NotificationType;
   title: string;
   message: string;
   link?: string;
   isRead: boolean;
+  readBy?: string[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -521,7 +526,7 @@ export interface INotification {
 export interface IReturnRequest {
   _id: Types.ObjectId;
   orderId: Types.ObjectId;
-  userId: Types.ObjectId;
+  userId?: Types.ObjectId | null;
   orderItemId: Types.ObjectId;
   reason: ReturnReason;
   description: string;
@@ -923,4 +928,21 @@ export interface UpdateAssignmentStatusInput {
   photoUrl?: string;
   failureReason?: string;
 }
-
+export interface ITrackOrderDTO {
+  _id?: string; // Required for invoice link
+  orderNumber: string;
+  status: OrderStatus;
+  paymentMethod: PaymentMethod;
+  paymentStatus: PaymentStatus;
+  totalAmount: number;
+  courier?: string;
+  trackingNumber?: string;
+  orderItems: Array<{
+    name: string;
+    size: string;
+    color: string;
+    quantity: number;
+    price: number;
+  }>;
+  createdAt: Date;
+}

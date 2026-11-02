@@ -4,6 +4,8 @@
  * @file actions/referral.actions.ts
  * @description Customer viral referral engine, tracking, automatic Rs. 200 wallet reward,
  * and 10% discount promo generation for OX Shoes Pakistan.
+ * Enforces strict role-based access control (CUSTOMER/MANAGER restricted to self,
+ * cross-customer access strictly limited to SUPER_ADMIN/ADMIN).
  * Strict TypeScript: ZERO `any`.
  */
 
@@ -12,34 +14,87 @@ import { User } from '@/models/User';
 import { Referral } from '@/models/Referral';
 import { WalletTransaction } from '@/models/WalletTransaction';
 import { Coupon } from '@/models/Coupon';
-import { addCredit, getWalletBalance, getWalletTransactions } from './wallet.actions';
+import { Order } from '@/models/Order';
+import { getWalletBalance, getWalletTransactions } from './wallet.actions';
+import { addCreditInternal } from '@/lib/services/wallet.service';
 import { successResponse, errorResponse, type ActionResult } from '@/lib/response';
 import { handleActionError } from '@/lib/error-handler';
 import { MockDb } from '@/lib/db/mock-store';
-import { TransactionStatus, ReferralStatus, CouponType, ProductCategory, type IReferral, type IWalletTransaction } from '@/types';
+import { TransactionStatus, ReferralStatus, CouponType, UserRole, type IReferral, type IWalletTransaction, OrderStatus } from '@/types';
 import { Types } from 'mongoose';
 import { revalidatePath } from 'next/cache';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
+import { isElevatedAdminRole } from '@/lib/auth-guard';
+import { completeReferralInternal, cancelReferralInternal } from '@/lib/services/referral.service';
 
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://oxshoes.pk';
+const APP_URL =
+  process.env.NEXT_PUBLIC_APP_URL ||
+  process.env.NEXT_PUBLIC_URL ||
+  process.env.NEXTAUTH_URL ||
+  'https://oxshoes.pk';
 
 /**
  * Generate user's full viral referral link: https://domain/r/[referralCode]
+ * Non-elevated roles (CUSTOMER, MANAGER) are strictly restricted to their own referral link.
+ * Unauthenticated requests supplying an arbitrary userId are rejected.
  */
 export async function generateMyReferralLink(
   userId?: string,
   providedCode?: string
 ): Promise<ActionResult<{ link: string; code: string }>> {
   try {
-    let code = providedCode || 'OX-HAMZA8';
+    let code = providedCode || '';
 
-    if (userId && !providedCode) {
+    let session = null;
+    try {
+      session = await getServerSession(authOptions);
+    } catch {
+      session = null;
+    }
+
+    const sessionUser = session?.user as { id?: string; email?: string; role?: string } | undefined;
+
+    let targetUserId = userId;
+
+    if (sessionUser) {
+      const isElevatedAdmin = isElevatedAdminRole(sessionUser.role);
+      if (userId && !isElevatedAdmin && userId !== sessionUser.id) {
+        return errorResponse("Unauthorized: Cannot inspect another customer's referral link.");
+      }
+      targetUserId = isElevatedAdmin && userId ? userId.trim() : sessionUser.id;
+    } else {
+      if (userId && !providedCode) {
+        return errorResponse('Unauthenticated: Please sign in to view referral link.');
+      }
+    }
+
+    if (targetUserId && !providedCode) {
+      if (!Types.ObjectId.isValid(targetUserId)) {
+        return errorResponse('Invalid user ID format for referral link generation.');
+      }
+
       await connectToDatabase();
       if (isDatabaseConnected()) {
-        const user = await User.findById(userId).select('referralCode').lean();
-        if (user && user.referralCode) {
-          code = user.referralCode;
+        const user = await User.findById(targetUserId);
+
+        if (user) {
+          if (user.referralCode && user.referralCode.trim()) {
+            code = user.referralCode.trim().toUpperCase();
+          } else {
+            // Generate a persistent unique referral code for user if missing
+            const hex = user._id ? user._id.toString().slice(-6).toUpperCase() : Math.random().toString(36).substring(2, 8).toUpperCase();
+            const newCode = `USR-${hex}`;
+            user.referralCode = newCode;
+            await user.save();
+            code = newCode;
+          }
         }
       }
+    }
+
+    if (!code) {
+      code = 'OX-REFERRAL';
     }
 
     const domain = APP_URL.replace(/\/+$/, '');
@@ -67,7 +122,7 @@ export async function trackReferralClick(
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
-      const mockReferral = MockDb.addReferral({
+      MockDb.addReferral({
         referrerId: 'user-demo-hamza',
         referredEmail: newUserEmail || 'guest-visitor@oxshoes.pk',
         code: normalizedCode,
@@ -83,14 +138,19 @@ export async function trackReferralClick(
     }
 
     if (newUserEmail) {
+      const cleanEmail = newUserEmail.toLowerCase().trim();
+      if (referrer.email.toLowerCase().trim() === cleanEmail) {
+        return successResponse({ tracked: false, referrerName: referrer.name });
+      }
+
       const existingRef = await Referral.findOne({
-        referredEmail: newUserEmail.toLowerCase().trim(),
+        referredEmail: cleanEmail,
       });
 
       if (!existingRef) {
         await Referral.create({
           referrerId: referrer._id,
-          referredEmail: newUserEmail.toLowerCase().trim(),
+          referredEmail: cleanEmail,
           code: normalizedCode,
           rewardAmount: 200,
           status: ReferralStatus.PENDING,
@@ -110,8 +170,9 @@ export async function trackReferralClick(
 /**
  * Complete referral on referee's first successful order:
  * - Mark referral as ReferralStatus.APPROVED
- * - Credit referrer with Rs. 200 (walletBalance += 200) + ledger log
+ * - Credit referrer with Rs. 200 (walletBalance += 200) + ledger log via addCreditInternal
  * - Issue a 10% off thank-you coupon for the referred user if not already generated
+ * Strictly limited to SUPER_ADMIN and ADMIN.
  */
 export async function completeReferral(
   referredUserId: string,
@@ -125,136 +186,104 @@ export async function completeReferral(
   }>
 > {
   try {
-    await connectToDatabase();
-
-    if (!isDatabaseConnected()) {
-      const res = MockDb.completeReferral(referredUserId, orderId);
-      revalidatePath('/dashboard/referrals');
-      revalidatePath('/admin');
-      return successResponse({
-        completed: res.success,
-        rewardAmount: 200,
-      });
+    let session = null;
+    try {
+      session = await getServerSession(authOptions);
+    } catch {
+      session = null;
     }
 
-    // 1. Find referred user to verify referredBy
-    const referee = await User.findById(referredUserId);
-    if (!referee || !referee.referredBy) {
-      // Check if there is a pending referral by referee's email
-      const refByEmail = referee?.email
-        ? await Referral.findOne({
-            referredEmail: referee.email.toLowerCase(),
-            status: { $in: [ReferralStatus.PENDING] },
-          })
-        : null;
+    if (!session?.user || !isElevatedAdminRole((session.user as { role?: string }).role)) {
+      return errorResponse('Unauthorized: Administrative clearance required to manually complete referrals.');
+    }
 
-      if (!refByEmail) {
-        return successResponse({ completed: false, rewardAmount: 0 });
+    const result = await completeReferralInternal(referredUserId, orderId);
+
+    if (result.success) {
+      try {
+        revalidatePath('/dashboard/referrals');
+        revalidatePath('/admin');
+      } catch {
+        // Ignored
       }
-
-      refByEmail.refereeId = referee?._id;
-      refByEmail.orderId = orderId ? new Types.ObjectId(orderId) : undefined;
-      refByEmail.status = ReferralStatus.PENDING;
-      refByEmail.completedAt = new Date();
-      await refByEmail.save();
-
-      // Credit referrer
-      await addCredit(
-        refByEmail.referrerId.toString(),
-        refByEmail.rewardAmount || 200,
-        `Referral Reward: ${referee?.name || referee?.email || 'Friend'} completed their 1st order!`,
-        orderId || refByEmail._id.toString(),
-        TransactionStatus.PENDING
-      );
-
-      return successResponse({
-        completed: true,
-        rewardAmount: refByEmail.rewardAmount || 200,
-        referrerId: refByEmail.referrerId.toString(),
-      });
     }
-
-    // 2. Check for active/pending referral record
-    let referralRecord = await Referral.findOne({
-      refereeId: referee._id,
-      referrerId: referee.referredBy,
-      status: { $in: [ReferralStatus.PENDING] },
-    });
-
-    if (!referralRecord) {
-      // Create if none existed but referredBy is set
-      const referrerUser = await User.findById(referee.referredBy);
-      referralRecord = await Referral.create({
-        referrerId: referee.referredBy,
-        refereeId: referee._id,
-        referredEmail: referee.email,
-        referredName: referee.name,
-        code: referrerUser?.referralCode || 'REF-REWARD',
-        rewardAmount: 200,
-        status: ReferralStatus.PENDING,
-      });
-    }
-
-    // 3. Mark completed
-    referralRecord.status = ReferralStatus.APPROVED;
-    referralRecord.completedAt = new Date();
-    await referralRecord.save();
-
-    // 4. Give Rs. 200 credit to referrer
-    await addCredit(
-      referee.referredBy.toString(),
-      referralRecord.rewardAmount || 200,
-      `Referral Reward: ${referee.name || referee.email} completed 1st shoe purchase!`,
-      orderId || referralRecord._id.toString()
-    );
-
-    // 5. Generate 10% coupon for the referee
-    const couponCode = `FRIEND10-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
-    await Coupon.create({
-      code: couponCode,
-      type: CouponType.PERCENTAGE,
-      value: 10,
-      minOrderAmount: 1000,
-      maxDiscountAmount: 1000,
-      usageLimit: 1,
-      usedCount: 0,
-      perUserLimit: 1,
-      isFirstOrderOnly: false,
-      isReferralReward: true,
-      startsAt: new Date(),
-      expiresAt: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000), // 60 days
-      isActive: true,
-    });
-
-    revalidatePath('/dashboard/referrals');
-    revalidatePath('/admin');
 
     return successResponse({
-      completed: true,
-      rewardAmount: referralRecord.rewardAmount || 200,
-      referrerId: referee.referredBy.toString(),
-      couponCode,
+      completed: result.success,
+      rewardAmount: result.rewardAmount,
+      referrerId: result.referrerId,
+      couponCode: result.couponCode,
     });
   } catch (error: unknown) {
-    const res = MockDb.completeReferral(referredUserId, orderId);
-    return successResponse({
-      completed: res.success,
-      rewardAmount: 200,
-    });
+    return handleActionError(error);
   }
+}
+
+/**
+ * Authorization policy evaluator for getMyReferrals.
+ * Non-elevated roles (CUSTOMER, MANAGER) are strictly restricted to their own referrals.
+ * Only SUPER_ADMIN and ADMIN are permitted cross-customer access.
+ */
+export async function verifyReferralsAuthorization(
+  sessionUser: { id?: string; email?: string; role?: string } | undefined,
+  userId?: string
+): Promise<ActionResult<{ targetUserId: string }>> {
+  if (!sessionUser) {
+    return errorResponse('Unauthenticated: Please sign in to view referrals.');
+  }
+
+  const isElevatedAdmin = isElevatedAdminRole(sessionUser.role);
+
+  // Non-elevated roles (CUSTOMER, MANAGER, etc.) can only access their own referrals
+  if (userId && !isElevatedAdmin && userId !== sessionUser.id) {
+    return errorResponse("Unauthorized: Cannot access another customer's referrals.");
+  }
+
+  // Resolve target user ID: elevated admins can target any valid user ID; non-admins use session ID
+  const rawTargetId = isElevatedAdmin && userId ? userId : sessionUser.id;
+
+  // Reject session if ID is missing (never substitute email as a MongoDB user ID)
+  if (!rawTargetId || typeof rawTargetId !== 'string' || !rawTargetId.trim()) {
+    return errorResponse('Invalid session: Missing user identifier.');
+  }
+
+  const cleanTargetId = rawTargetId.trim();
+
+  // Validate that the target ID is a valid MongoDB ObjectId before querying
+  if (!Types.ObjectId.isValid(cleanTargetId)) {
+    return errorResponse('Invalid request: Target user identifier must be a valid MongoDB ID.');
+  }
+
+  return successResponse({ targetUserId: cleanTargetId });
 }
 
 /**
  * Get referrals made by the logged-in user
  */
 export async function getMyReferrals(
-  userId: string
+  userId?: string
 ): Promise<ActionResult<{ referrals: IReferral[]; totalEarned: number }>> {
+  let targetUserId = userId;
   try {
+    let session = null;
+    try {
+      session = await getServerSession(authOptions);
+    } catch {
+      session = null;
+    }
+
+    const sessionUser = session?.user as { id?: string; email?: string; role?: string } | undefined;
+    const authCheck = await verifyReferralsAuthorization(sessionUser, userId);
+    if (!authCheck.success || !authCheck.data) {
+      return authCheck as ActionResult<{ referrals: IReferral[]; totalEarned: number }>;
+    }
+
+    targetUserId = authCheck.data.targetUserId;
+
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
-      const refs = MockDb.getReferralsByUser(userId);
+      const refs = MockDb.getReferralsByUser(targetUserId);
       const totalEarned = refs
         .filter((r) => r.status === ReferralStatus.APPROVED)
         .reduce((sum, r) => sum + (r.rewardAmount || 200), 0);
@@ -262,16 +291,13 @@ export async function getMyReferrals(
     }
 
     const refs = await Referral.find({
-      $or: [
-        { referrerId: new Types.ObjectId(userId) },
-        ...(Types.ObjectId.isValid(userId) ? [] : [{ referrerId: userId as any }]),
-      ],
+      referrerId: new Types.ObjectId(targetUserId),
     })
       .sort({ createdAt: -1 })
       .lean();
 
     if (!refs || refs.length === 0) {
-      const mockRefs = MockDb.getReferralsByUser(userId);
+      const mockRefs = MockDb.getReferralsByUser(targetUserId || '');
       const totalEarned = mockRefs
         .filter((r) => r.status === ReferralStatus.APPROVED)
         .reduce((sum, r) => sum + (r.rewardAmount || 200), 0);
@@ -287,7 +313,7 @@ export async function getMyReferrals(
       totalEarned,
     });
   } catch (error: unknown) {
-    const mockRefs = MockDb.getReferralsByUser(userId);
+    const mockRefs = MockDb.getReferralsByUser(targetUserId || '');
     const totalEarned = mockRefs
       .filter((r) => r.status === ReferralStatus.APPROVED)
       .reduce((sum, r) => sum + (r.rewardAmount || 200), 0);
@@ -296,9 +322,12 @@ export async function getMyReferrals(
 }
 
 /**
- * Get unified wallet & referral status for customer dashboard
+ * Get unified wallet & referral status for customer dashboard.
+ * Requires authenticated session. Non-elevated roles (CUSTOMER, MANAGER) are strictly
+ * restricted to their own wallet data. Nested calls independently enforce their authorization.
+ * Any authorization failure fails immediately to prevent partial data leakage.
  */
-export async function getMyWallet(userId: string): Promise<
+export async function getMyWallet(userId?: string): Promise<
   ActionResult<{
     walletBalance: number;
     totalEarned: number;
@@ -309,21 +338,66 @@ export async function getMyWallet(userId: string): Promise<
   }>
 > {
   try {
+    let session = null;
+    try {
+      session = await getServerSession(authOptions);
+    } catch {
+      session = null;
+    }
+
+    const sessionUser = session?.user as { id?: string; email?: string; role?: string } | undefined;
+
+    if (!sessionUser) {
+      return errorResponse('Unauthenticated: Please sign in to view your referral wallet.');
+    }
+
+    const isElevatedAdmin = isElevatedAdminRole(sessionUser.role);
+    let targetUserId = userId;
+
+    if (userId && !isElevatedAdmin && userId !== sessionUser.id) {
+      return errorResponse("Unauthorized: Cannot access another customer's wallet data.");
+    }
+
+    targetUserId = isElevatedAdmin && userId ? userId.trim() : sessionUser.id;
+
+    if (!targetUserId || typeof targetUserId !== 'string' || !targetUserId.trim()) {
+      return errorResponse('Invalid session: Missing user identifier.');
+    }
+
+    const cleanTargetId = targetUserId.trim();
+    if (!Types.ObjectId.isValid(cleanTargetId)) {
+      return errorResponse('Invalid request: Target user identifier must be a valid MongoDB ID.');
+    }
+
     const [balanceRes, referralsRes, txsRes, linkRes] = await Promise.all([
-      getWalletBalance(userId),
-      getMyReferrals(userId),
-      getWalletTransactions(userId),
-      generateMyReferralLink(userId),
+      getWalletBalance(cleanTargetId),
+      getMyReferrals(cleanTargetId),
+      getWalletTransactions(cleanTargetId),
+      generateMyReferralLink(cleanTargetId),
     ]);
 
-    const balance = balanceRes.success && balanceRes.data ? balanceRes.data.balance : 400;
+    // Fail closed if any authorization checks failed
+    if (!balanceRes.success && (balanceRes.error || '').includes('Unauthorized')) {
+      return errorResponse(balanceRes.error || 'Unauthorized');
+    }
+    if (!referralsRes.success && (referralsRes.error || '').includes('Unauthorized')) {
+      return errorResponse(referralsRes.error || 'Unauthorized');
+    }
+    if (!txsRes.success && (txsRes.error || '').includes('Unauthorized')) {
+      return errorResponse(txsRes.error || 'Unauthorized');
+    }
+    if (!linkRes.success && (linkRes.error || '').includes('Unauthorized')) {
+      return errorResponse(linkRes.error || 'Unauthorized');
+    }
+
+    const balance = balanceRes.success && balanceRes.data ? balanceRes.data.balance : 0;
     const referrals = referralsRes.success && referralsRes.data ? referralsRes.data.referrals : [];
     const totalEarned =
       referralsRes.success && referralsRes.data
         ? referralsRes.data.totalEarned
-        : referrals.length * 200;
+        : referrals.filter((r) => r.status === ReferralStatus.APPROVED || (r.status as string) === 'Completed').reduce((sum, r) => sum + (r.rewardAmount || 200), 0);
     const transactions = txsRes.success && txsRes.data ? txsRes.data : [];
-    const referralCode = linkRes.success && linkRes.data ? linkRes.data.code : 'OX-HAMZA8';
+    const referralCode = linkRes.success && linkRes.data ? linkRes.data.code : 'OX-REFERRAL';
     const referralLink =
       linkRes.success && linkRes.data
         ? linkRes.data.link
@@ -343,7 +417,8 @@ export async function getMyWallet(userId: string): Promise<
 }
 
 /**
- * Admin: Retrieve all platform referrals
+ * Admin: Retrieve all platform referrals.
+ * Strictly limited to SUPER_ADMIN and ADMIN.
  */
 export async function getAllReferralsAdmin(): Promise<
   ActionResult<{
@@ -354,6 +429,17 @@ export async function getAllReferralsAdmin(): Promise<
   }>
 > {
   try {
+    let session = null;
+    try {
+      session = await getServerSession(authOptions);
+    } catch {
+      session = null;
+    }
+
+    if (!session?.user || !isElevatedAdminRole((session.user as { role?: string }).role)) {
+      return errorResponse('Unauthorized: Administrative clearance required.');
+    }
+
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
@@ -384,26 +470,53 @@ export async function getAllReferralsAdmin(): Promise<
       totalRewardsDistributed: completed.reduce((sum, r) => sum + (r.rewardAmount || 200), 0),
     });
   } catch (error: unknown) {
-    const refs = MockDb.getAllReferrals();
-    const completed = refs.filter((r) => r.status === ReferralStatus.APPROVED);
-    return successResponse({
-      referrals: refs as IReferral[],
-      totalReferrals: refs.length,
-      completedCount: completed.length,
-      totalRewardsDistributed: completed.length * 200,
-    });
+    return handleActionError(error);
   }
 }
 
 /**
- * Approve referral - moves pending credit to active
+ * Approve referral - moves pending credit to active.
+ * Strictly limited to SUPER_ADMIN and ADMIN.
  */
 export async function approveReferral(referredOrderId: string): Promise<ActionResult<{ approved: boolean }>> {
   try {
+    let session = null;
+    try {
+      session = await getServerSession(authOptions);
+    } catch {
+      session = null;
+    }
+
+    if (!session?.user || !isElevatedAdminRole((session.user as { role?: string }).role)) {
+      return errorResponse('Unauthorized: Administrative clearance required.');
+    }
+
+    if (!referredOrderId || !referredOrderId.trim()) {
+      return errorResponse('Invalid order identifier.');
+    }
+
     await connectToDatabase();
-    const referral = await Referral.findOne({ orderId: new Types.ObjectId(referredOrderId) });
+
+    let referral = null;
+    const cleanId = referredOrderId.trim();
+
+    if (Types.ObjectId.isValid(cleanId)) {
+      referral = await Referral.findOne({ orderId: new Types.ObjectId(cleanId) });
+    }
+
+    if (!referral) {
+      // Try searching order by orderNumber
+      const order = await Order.findOne({
+        orderNumber: cleanId.toUpperCase(),
+      }).lean();
+
+      if (order?._id) {
+        referral = await Referral.findOne({ orderId: order._id });
+      }
+    }
+
     if (!referral || referral.status !== ReferralStatus.PENDING) {
-        return errorResponse('Referral not found or already processed.');
+      return errorResponse('Referral not found or already processed.');
     }
 
     referral.status = ReferralStatus.APPROVED;
@@ -411,13 +524,17 @@ export async function approveReferral(referredOrderId: string): Promise<ActionRe
 
     // Find the wallet transaction and update status
     await WalletTransaction.findOneAndUpdate(
-        { referenceId: referral._id.toString() },
-        { status: TransactionStatus.COMPLETED }
+      { referenceId: referral._id.toString() },
+      { status: TransactionStatus.COMPLETED }
     );
-    
-    revalidatePath('/dashboard/referrals');
-    revalidatePath('/admin');
-    
+
+    try {
+      revalidatePath('/dashboard/referrals');
+      revalidatePath('/admin');
+    } catch {
+      // Ignored in tests
+    }
+
     return successResponse({ approved: true });
   } catch (error) {
     return handleActionError(error);
@@ -425,45 +542,58 @@ export async function approveReferral(referredOrderId: string): Promise<ActionRe
 }
 
 /**
- * Cancel referral - if order is cancelled/returned/refunded
+ * Cancel referral - if order is cancelled/returned/refunded.
+ * Strictly limited to SUPER_ADMIN and ADMIN.
  */
-export async function cancelReferral(referredOrderId: string): Promise<ActionResult<{ cancelled: boolean }>> {
+export async function cancelReferral(
+  referredOrderId: string
+): Promise<ActionResult<{ cancelled: boolean }>> {
   try {
+    if (!referredOrderId || typeof referredOrderId !== 'string' || !referredOrderId.trim()) {
+      return errorResponse('Invalid order identifier: a valid Order ID or Order Number is required.');
+    }
+
+    let session = null;
+    try {
+      session = await getServerSession(authOptions);
+    } catch {
+      session = null;
+    }
+
+    if (!session?.user || !isElevatedAdminRole((session.user as { role?: string }).role)) {
+      return errorResponse('Unauthorized: Administrative clearance required to cancel referrals.');
+    }
+
     await connectToDatabase();
-    const referral = await Referral.findOne({ orderId: new Types.ObjectId(referredOrderId) });
-    if (!referral) {
-        return errorResponse('Referral not found.');
+    const cleanId = referredOrderId.trim();
+
+    // Check if order exists before attempting cancellation to provide better error feedback
+    let orderDoc = null;
+    if (Types.ObjectId.isValid(cleanId)) {
+      orderDoc = await Order.findById(cleanId).lean();
+    }
+    if (!orderDoc) {
+      orderDoc = await Order.findOne({ orderNumber: cleanId.toUpperCase() }).lean();
     }
 
-    if (referral.status === ReferralStatus.CANCELLED) {
-        return successResponse({ cancelled: true });
+    if (!orderDoc) {
+      return errorResponse(`Order not found: "${cleanId}" does not match any existing record.`);
     }
 
-    const wasApproved = referral.status === ReferralStatus.APPROVED;
-    referral.status = ReferralStatus.CANCELLED;
-    await referral.save();
-    
-    // Cancel pending transaction if it was pending
-    await WalletTransaction.findOneAndUpdate(
-        { referenceId: referral._id.toString(), status: TransactionStatus.PENDING },
-        { status: TransactionStatus.CANCELLED }
-    );
+    const result = await cancelReferralInternal(cleanId);
 
-    if (wasApproved) {
-        // Create a deduction transaction because credit was already active
-        await addCredit(
-            referral.referrerId.toString(),
-            -(referral.rewardAmount || 200),
-            `Referral Cancelled: Deduction for order ${referredOrderId}`,
-            referral._id.toString(),
-            TransactionStatus.COMPLETED
-        );
+    if (result.success) {
+      try {
+        revalidatePath('/dashboard/referrals');
+        revalidatePath('/admin');
+      } catch {
+        // Ignored
+      }
     }
 
-    revalidatePath('/dashboard/referrals');
-    revalidatePath('/admin');
-    
-    return successResponse({ cancelled: true });
+    return result.success 
+      ? successResponse({ cancelled: true }, result.alreadyCancelled ? 'Referral already cancelled.' : undefined)
+      : errorResponse('Failed to cancel referral: internal consistency error.');
   } catch (error) {
     return handleActionError(error);
   }

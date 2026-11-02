@@ -6,13 +6,40 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
 import { connectToDatabase } from '@/lib/db/connect';
 import { Notification } from '@/models/Notification';
 import { User } from '@/models/User';
-import { NotificationType } from '@/types';
+import { NotificationType, UserRole } from '@/types';
+
+export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
   try {
+    let session = null;
+    try {
+      session = await getServerSession(authOptions);
+    } catch {
+      session = null;
+    }
+    const sessionRole = (session?.user as { role?: string } | undefined)?.role;
+
+    if (!session?.user) {
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized: Authentication required.' },
+        { status: 401 }
+      );
+    }
+
+    const isAuthorized = sessionRole === UserRole.ADMIN || sessionRole === UserRole.SUPER_ADMIN;
+    if (!isAuthorized) {
+      return NextResponse.json(
+        { success: false, error: 'Forbidden: Administrative privileges required.' },
+        { status: 403 }
+      );
+    }
+
     const body = await req.json();
     const { target, userId, title, message, type = 'promotion', link = '' } = body;
 

@@ -4,6 +4,12 @@ const nextConfig: NextConfig = {
   experimental: {
     serverActions: {
       bodySizeLimit: '100mb',
+      allowedOrigins: [
+        'localhost:3000',
+        'ais-dev-rhxad2wyclxoabzvs7js3c-916382680134.asia-east1.run.app',
+        'ais-pre-rhxad2wyclxoabzvs7js3c-916382680134.asia-east1.run.app',
+        'dawood-ox-shoes-shop.vercel.app',
+      ],
     },
   },
   reactStrictMode: true,

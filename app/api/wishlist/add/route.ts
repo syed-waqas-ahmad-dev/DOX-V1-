@@ -1,22 +1,38 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
 import { connectToDatabase } from '@/lib/db/connect';
 import { Wishlist } from '@/models/Wishlist';
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const { userId, productId } = body;
+    let session = null;
+    try {
+      session = await getServerSession(authOptions);
+    } catch {
+      session = null;
+    }
 
-    if (!userId || !productId) {
+    if (!session?.user) {
       return NextResponse.json(
-        { success: false, error: 'Both userId and productId are required' },
+        { success: false, error: 'Unauthorized: Authentication required to manage wishlist.' },
+        { status: 401 }
+      );
+    }
+
+    const body = await req.json();
+    const { productId } = body;
+    const userId = session.user.id;
+
+    if (!productId) {
+      return NextResponse.json(
+        { success: false, error: 'Product ID is required' },
         { status: 400 }
       );
     }
 
     const conn = await connectToDatabase();
     if (!conn) {
-      // Mock mode fallback when database is not connected
       return NextResponse.json({
         success: true,
         message: 'Saved to wishlist (mock mode)',
@@ -24,7 +40,6 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Upsert or create item in wishlists collection
     const item = await Wishlist.findOneAndUpdate(
       { userId, productId },
       { userId, productId, createdAt: new Date() },

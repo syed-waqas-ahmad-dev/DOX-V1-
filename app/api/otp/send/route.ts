@@ -6,9 +6,7 @@
  */
 
 import { NextResponse, type NextRequest } from 'next/server';
-
-// In-memory OTP store for sandbox / development environment
-const otpStore = new Map<string, { code: string; expiresAt: number }>();
+import { setOtp } from '@/lib/otp-store';
 
 export async function POST(req: NextRequest) {
   try {
@@ -24,15 +22,12 @@ export async function POST(req: NextRequest) {
 
     // Generate random 6-digit PIN
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes TTL
 
-    otpStore.set(phone, { code: otp, expiresAt });
+    setOtp(phone, otp);
 
     return NextResponse.json({
       success: true,
       message: `OTP sent successfully to ${phone}. Valid for 10 minutes.`,
-      // Return code in sandbox response for convenience during testing
-      demoOtp: otp,
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Failed to send OTP';

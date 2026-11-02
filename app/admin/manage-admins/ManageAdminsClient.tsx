@@ -17,8 +17,6 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Logo } from '@/components/layout/Logo';
 import { createAdmin, deleteAdmin, type AdminUserItem } from './actions';
-
-const PRIMARY_SUPER_ADMIN_EMAIL = 'ahmadsyedwaqas4@gmail.com';
 import {
   Users,
   ShieldCheck,
@@ -112,7 +110,7 @@ export function ManageAdminsClient({
   };
 
   const handleDeleteClick = (admin: AdminUserItem) => {
-    if (admin.email.toLowerCase().trim() === PRIMARY_SUPER_ADMIN_EMAIL.toLowerCase()) {
+    if (admin.role === 'super_admin') {
       return;
     }
     setDeleteError(null);
@@ -325,8 +323,7 @@ export function ManageAdminsClient({
                 ) : (
                   initialAdmins.map((admin) => {
                     const isSuper = admin.role === 'super_admin';
-                    const isPrimarySuperAdmin =
-                      admin.email.toLowerCase().trim() === PRIMARY_SUPER_ADMIN_EMAIL.toLowerCase();
+                    const isSuperAdminAccount = isSuper;
 
                     return (
                       <tr
@@ -409,20 +406,20 @@ export function ManageAdminsClient({
                           <td className="py-4 px-6 text-right">
                             <button
                               type="button"
-                              disabled={isPrimarySuperAdmin || isDeleting}
+                              disabled={isSuperAdminAccount || isDeleting}
                               onClick={() => {
-                                if (!isPrimarySuperAdmin) {
+                                if (!isSuperAdminAccount) {
                                   handleDeleteClick(admin);
                                 }
                               }}
                               className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all ${
-                                isPrimarySuperAdmin
+                                isSuperAdminAccount
                                   ? 'bg-neutral-800/40 text-neutral-500 border border-neutral-700/40 cursor-not-allowed opacity-50'
                                   : 'bg-red-950/40 hover:bg-red-900/60 text-red-400 hover:text-red-200 border border-red-800/40 hover:border-red-600/60 cursor-pointer shadow-sm'
                               }`}
                               title={
-                                isPrimarySuperAdmin
-                                  ? 'Primary Super Admin account is permanently protected'
+                                isSuperAdminAccount
+                                  ? 'Super Admin accounts are permanently protected'
                                   : `Delete admin ${admin.name}`
                               }
                             >

@@ -22,7 +22,17 @@ const couponUsageSchema = new Schema<ICouponUsage, CouponUsageModelType>(
     userId: {
       type: Schema.Types.ObjectId,
       ref: 'User',
-      required: [true, 'User reference is required'],
+      index: true,
+    },
+    guestEmail: {
+      type: String,
+      lowercase: true,
+      trim: true,
+      index: true,
+    },
+    guestPhone: {
+      type: String,
+      trim: true,
       index: true,
     },
     orderId: {
@@ -46,8 +56,10 @@ const couponUsageSchema = new Schema<ICouponUsage, CouponUsageModelType>(
   }
 );
 
-// Compound Unique Index: Prevents duplicate coupon applications on the same order
-couponUsageSchema.index({ couponId: 1, userId: 1, orderId: 1 }, { unique: true });
+// Compound Unique Index: Prevents duplicate coupon applications on the same order for authenticated/guest
+couponUsageSchema.index({ couponId: 1, userId: 1, orderId: 1 }, { unique: true, partialFilterExpression: { userId: { $exists: true } } });
+couponUsageSchema.index({ couponId: 1, guestEmail: 1, orderId: 1 }, { unique: true, partialFilterExpression: { guestEmail: { $exists: true } } });
+couponUsageSchema.index({ couponId: 1, guestPhone: 1, orderId: 1 }, { unique: true, partialFilterExpression: { guestPhone: { $exists: true } } });
 couponUsageSchema.index({ couponId: 1, userId: 1 });
 
 export const CouponUsage: CouponUsageModelType =

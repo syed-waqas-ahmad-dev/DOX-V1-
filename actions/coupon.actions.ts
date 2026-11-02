@@ -6,6 +6,9 @@
  * Strict TypeScript: ZERO `any`.
  */
 
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
+import { isElevatedAdminRole } from '@/lib/auth-guard';
 import { connectToDatabase, isDatabaseConnected } from '@/lib/db/connect';
 import { Coupon } from '@/models/Coupon';
 import { validateCouponRules } from '@/lib/coupon-validator';
@@ -14,6 +17,15 @@ import { handleActionError } from '@/lib/error-handler';
 import { MockDb } from '@/lib/db/mock-store';
 import { CouponType, type ICoupon } from '@/types';
 import { revalidatePath } from 'next/cache';
+
+// Helper for coupon management auth
+async function checkCouponAdminAuth() {
+  const session = await getServerSession(authOptions);
+  if (!session?.user || !isElevatedAdminRole(session.user.role)) {
+    return false;
+  }
+  return true;
+}
 
 export async function validateCouponAction(
   code: string,
@@ -101,6 +113,7 @@ export async function validateCouponAction(
 
 export async function getAllCoupons(): Promise<ActionResult<ICoupon[]>> {
   try {
+    if (!(await checkCouponAdminAuth())) return errorResponse('Unauthorized.');
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
@@ -114,12 +127,13 @@ export async function getAllCoupons(): Promise<ActionResult<ICoupon[]>> {
 
     return successResponse(JSON.parse(JSON.stringify(coupons)));
   } catch (error: unknown) {
-    return successResponse(MockDb.getAllCoupons());
+    return handleActionError(error);
   }
 }
 
 export async function createCoupon(payload: Partial<ICoupon>): Promise<ActionResult<ICoupon>> {
   try {
+    if (!(await checkCouponAdminAuth())) return errorResponse('Unauthorized.');
     await connectToDatabase();
 
     const normalizedCode = (payload.code || 'COUPON').trim().toUpperCase();
@@ -165,6 +179,7 @@ export async function updateCoupon(
   updates: Partial<ICoupon>
 ): Promise<ActionResult<ICoupon>> {
   try {
+    if (!(await checkCouponAdminAuth())) return errorResponse('Unauthorized.');
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
@@ -199,6 +214,7 @@ export async function updateCoupon(
 
 export async function deleteCoupon(couponId: string): Promise<ActionResult<{ deleted: boolean }>> {
   try {
+    if (!(await checkCouponAdminAuth())) return errorResponse('Unauthorized.');
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {

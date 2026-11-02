@@ -10,12 +10,26 @@ import { connectToDatabase, isDatabaseConnected } from '@/lib/db/connect';
 import { Order } from '@/models/Order';
 import { Product } from '@/models/Product';
 import { User } from '@/models/User';
-import { successResponse, type ActionResult } from '@/lib/response';
+import { successResponse, errorResponse, type ActionResult } from '@/lib/response';
 import { handleActionError } from '@/lib/error-handler';
-import { OrderStatus, PaymentStatus, type AdminDashboardMetrics } from '@/types';
+import { OrderStatus, PaymentStatus, type AdminDashboardMetrics, UserRole } from '@/types';
 import { MockDb } from '@/lib/db/mock-store';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
+import { isAdminRole } from '@/lib/auth-guard';
 
 export async function getAdminMetrics(): Promise<ActionResult<AdminDashboardMetrics>> {
+  let session = null;
+  try {
+    session = await getServerSession(authOptions);
+  } catch {
+    session = null;
+  }
+
+  if (!session?.user || !isAdminRole((session.user as { role: UserRole }).role)) {
+    return errorResponse('Unauthorized: Administrative clearance required.');
+  }
+
   try {
     await connectToDatabase();
 
@@ -175,31 +189,6 @@ export async function getAdminMetrics(): Promise<ActionResult<AdminDashboardMetr
       recentOrders,
     });
   } catch (error: unknown) {
-    const mock = MockDb.getAdminMetrics();
-    return successResponse({
-      ...mock,
-      aovPKR: 4200,
-      cityDistribution: [
-        { city: 'Karachi', count: 5, totalPKR: 24000 },
-        { city: 'Lahore', count: 4, totalPKR: 19500 },
-        { city: 'Islamabad', count: 3, totalPKR: 12000 },
-      ],
-      paymentBreakdown: {
-        codCount: 10,
-        prepaidCount: 2,
-        codAmount: 45000,
-        prepaidAmount: 8000,
-      },
-      statusBreakdown: { confirmed: 4, processing: 3, shipped: 2, delivered: 3 },
-      revenueTrend: [
-        { label: 'Mon', amount: 9000, count: 2 },
-        { label: 'Tue', amount: 15000, count: 3 },
-        { label: 'Wed', amount: 12000, count: 2 },
-        { label: 'Thu', amount: 18000, count: 4 },
-        { label: 'Fri', amount: 24000, count: 5 },
-        { label: 'Sat', amount: 28000, count: 6 },
-        { label: 'Sun', amount: 21000, count: 4 },
-      ],
-    });
+    return handleActionError(error);
   }
 }

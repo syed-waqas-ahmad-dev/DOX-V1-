@@ -2612,17 +2612,57 @@ export default function AdminDashboardPage() {
                 />
               </div>
 
-              <div className="space-y-1">
-                <label className="font-bold text-neutral-300">Stock Units</label>
-                <input
-                  type="number"
-                  value={editingProduct.stock}
-                  onChange={(e) =>
-                    setEditingProduct({ ...editingProduct, stock: Number(e.target.value) })
-                  }
-                  className="w-full px-3 py-2 rounded-xl bg-neutral-950 border border-neutral-800 text-white font-mono"
-                />
-              </div>
+              {/* Size-wise Variant Inventory */}
+              {editingProduct.variants && editingProduct.variants.length > 0 ? (
+                <div className="space-y-2 p-3 rounded-2xl bg-neutral-950 border border-neutral-800">
+                  <div className="flex items-center justify-between">
+                    <span className="font-black uppercase tracking-wider text-amber-500 text-[11px]">
+                      Size-Wise Inventory
+                    </span>
+                    <span className="text-[11px] font-mono text-neutral-400">
+                      Total: <strong className="text-white">{editingProduct.stock}</strong> units
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {editingProduct.variants.map((v, idx) => (
+                      <div key={v.sku || `${v.size}-${idx}`} className="flex items-center justify-between bg-neutral-900 border border-neutral-800 px-2.5 py-1.5 rounded-xl">
+                        <span className="font-bold text-neutral-300 text-xs">
+                          Size {v.size}
+                        </span>
+                        <input
+                          type="number"
+                          min="0"
+                          value={v.stock}
+                          onChange={(e) => {
+                            const newStock = Math.max(0, Number(e.target.value));
+                            const updatedVars = [...editingProduct.variants];
+                            updatedVars[idx] = { ...updatedVars[idx], stock: newStock };
+                            const sum = updatedVars.reduce((acc, item) => acc + (item.stock || 0), 0);
+                            setEditingProduct({
+                              ...editingProduct,
+                              variants: updatedVars,
+                              stock: sum,
+                            });
+                          }}
+                          className="w-16 px-2 py-1 text-center rounded-lg bg-neutral-950 border border-neutral-700 text-white font-mono text-xs focus:outline-none focus:border-amber-500"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  <label className="font-bold text-neutral-300">Stock Units</label>
+                  <input
+                    type="number"
+                    value={editingProduct.stock}
+                    onChange={(e) =>
+                      setEditingProduct({ ...editingProduct, stock: Number(e.target.value) })
+                    }
+                    className="w-full px-3 py-2 rounded-xl bg-neutral-950 border border-neutral-800 text-white font-mono"
+                  />
+                </div>
+              )}
 
               <div className="flex items-center justify-between pt-2">
                 <label className="flex items-center gap-2 font-bold cursor-pointer">
@@ -2642,6 +2682,7 @@ export default function AdminDashboardPage() {
                     handleUpdateProduct(editingProduct._id.toString(), {
                       price: editingProduct.price,
                       stock: editingProduct.stock,
+                      variants: editingProduct.variants,
                       isFeatured: editingProduct.isFeatured,
                       images: editingProduct.images,
                     })

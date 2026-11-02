@@ -10,37 +10,25 @@ export const dynamic = 'force-dynamic';
 export async function GET(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
-    const sessionRole = (session?.user as any)?.role;
-    const sessionEmail = session?.user?.email?.toLowerCase();
+    const sessionRole = (session?.user as { role?: string } | undefined)?.role;
 
     const isAuthorized =
-      sessionEmail === 'ahmadsyedwaqas4@gmail.com' ||
-      sessionRole === 'super_admin' ||
-      sessionRole === 'admin';
+      sessionRole === UserRole.SUPER_ADMIN || sessionRole === UserRole.ADMIN;
 
-    // Allow in development or if authorized
-    if (!isAuthorized && process.env.NODE_ENV === 'production') {
-      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+    if (!isAuthorized) {
+      return NextResponse.json(
+        { success: false, error: 'Access Denied: Administrative privileges required.' },
+        { status: 401 }
+      );
     }
 
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
-      return NextResponse.json({
-        success: true,
-        data: [
-          {
-            _id: 'admin-dawood-khan',
-            name: 'Super Admin Ahmad Syed Waqas',
-            email: 'ahmadsyedwaqas4@gmail.com',
-            phone: '+923265695170',
-            role: UserRole.SUPER_ADMIN,
-            isEmailVerified: true,
-            isPhoneVerified: true,
-            createdAt: new Date().toISOString(),
-          },
-        ],
-      });
+      return NextResponse.json(
+        { success: false, error: 'Database service is currently unavailable.' },
+        { status: 503 }
+      );
     }
 
     const users = await User.find({ isDeleted: { $ne: true } })
@@ -48,67 +36,91 @@ export async function GET(req: NextRequest) {
       .sort({ createdAt: -1 })
       .lean();
 
-    // Ensure ahmadsyedwaqas4@gmail.com is always represented as SUPER_ADMIN
-    const sanitizedUsers = users.map((u) => {
-      if (u.email?.toLowerCase() === 'ahmadsyedwaqas4@gmail.com') {
-        return { ...u, role: UserRole.SUPER_ADMIN };
-      }
-      return u;
-    });
-
     return NextResponse.json({
       success: true,
-      data: sanitizedUsers,
+      data: users,
     });
-  } catch (error: any) {
-    return NextResponse.json(
-      { success: false, error: error?.message || 'Failed to fetch users' },
-      { status: 500 }
-    );
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Failed to fetch users';
+    return NextResponse.json({ success: false, error: message }, { status: 500 });
   }
 }
 
 export async function PATCH(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
-    const sessionRole = (session?.user as any)?.role;
-    const sessionEmail = session?.user?.email?.toLowerCase();
+    const sessionRole = (session?.user as { role?: string } | undefined)?.role;
 
-    const isAuthorized =
-      sessionEmail === 'ahmadsyedwaqas4@gmail.com' ||
-      sessionRole === 'super_admin' ||
-      sessionRole === 'admin';
-
-    if (!isAuthorized && process.env.NODE_ENV === 'production') {
-      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+    // Only super_admin or admin can access the endpoint
+    if (sessionRole !== UserRole.SUPER_ADMIN && sessionRole !== UserRole.ADMIN) {
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized: Administrative access required.' },
+        { status: 401 }
+      );
     }
 
     const body = await req.json();
     const { userId, role, isActive } = body;
 
     if (!userId) {
-      return NextResponse.json({ success: false, error: 'User ID is required' }, { status: 400 });
+      return NextResponse.json(
+        { success: false, error: 'User ID is required.' },
+        { status: 400 }
+      );
+    }
+
+    // Role elevation / modification is strictly restricted to SUPER_ADMIN
+    if (role !== undefined && sessionRole !== UserRole.SUPER_ADMIN) {
+      return NextResponse.json(
+        { success: false, error: 'Forbidden: Only Super Administrators can modify user roles.' },
+        { status: 403 }
+      );
+    }
+
+    // Prevent assigning invalid roles
+    if (role && !Object.values(UserRole).includes(role)) {
+      return NextResponse.json(
+        { success: false, error: 'Invalid user role requested.' },
+        { status: 400 }
+      );
     }
 
     await connectToDatabase();
 
-    if (isDatabaseConnected()) {
-      const updateData: Record<string, any> = {};
-      if (role) updateData.role = role;
-      if (typeof isActive === 'boolean') updateData.isActive = isActive;
-
-      const updated = await User.findByIdAndUpdate(userId, updateData, { new: true })
-        .select('-password')
-        .lean();
-
-      return NextResponse.json({ success: true, data: updated });
+    if (!isDatabaseConnected()) {
+      return NextResponse.json(
+        { success: false, error: 'Database connection is unavailable.' },
+        { status: 503 }
+      );
     }
 
-    return NextResponse.json({ success: true, message: 'Updated (mock mode)' });
-  } catch (error: any) {
-    return NextResponse.json(
-      { success: false, error: error?.message || 'Failed to update user' },
-      { status: 500 }
-    );
+    const targetUser = await User.findById(userId);
+    if (!targetUser) {
+      return NextResponse.json(
+        { success: false, error: 'Target user not found.' },
+        { status: 404 }
+      );
+    }
+
+    // Protect Super Admin accounts from being demoted by unauthorized actions
+    if (targetUser.role === UserRole.SUPER_ADMIN && role && role !== UserRole.SUPER_ADMIN) {
+      return NextResponse.json(
+        { success: false, error: 'Super Admin accounts cannot be demoted via this endpoint.' },
+        { status: 403 }
+      );
+    }
+
+    const updateData: Record<string, unknown> = {};
+    if (role) updateData.role = role;
+    if (typeof isActive === 'boolean') updateData.isActive = isActive;
+
+    const updated = await User.findByIdAndUpdate(userId, updateData, { new: true })
+      .select('-password')
+      .lean();
+
+    return NextResponse.json({ success: true, data: updated });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Failed to update user';
+    return NextResponse.json({ success: false, error: message }, { status: 500 });
   }
 }

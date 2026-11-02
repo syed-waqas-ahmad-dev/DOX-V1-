@@ -78,6 +78,14 @@ const referralSchema = new Schema<IReferral, ReferralModelType>(
 
 referralSchema.index({ referrerId: 1, status: 1 });
 referralSchema.index({ code: 1, status: 1 });
+referralSchema.index(
+  { referrerId: 1, refereeId: 1 },
+  { unique: true, partialFilterExpression: { refereeId: { $type: 'objectId' } } }
+);
+referralSchema.index(
+  { referrerId: 1, referredEmail: 1 },
+  { unique: true, partialFilterExpression: { referredEmail: { $type: 'string' } } }
+);
 
 export const Referral: ReferralModelType =
   (models.Referral as ReferralModelType) ||

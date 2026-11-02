@@ -22,7 +22,7 @@ const walletTransactionSchema = new Schema<IWalletTransaction, WalletTransaction
     amount: {
       type: Number,
       required: [true, 'Transaction amount in PKR is required'],
-      min: [1, 'Amount must be at least 1 PKR'],
+      min: [0, 'Amount cannot be negative'],
     },
     type: {
       type: String,
@@ -41,7 +41,7 @@ const walletTransactionSchema = new Schema<IWalletTransaction, WalletTransaction
     referenceId: {
       type: String,
       trim: true,
-      default: null,
+      default: undefined,
     },
     balanceAfter: {
       type: Number,
@@ -66,6 +66,10 @@ const walletTransactionSchema = new Schema<IWalletTransaction, WalletTransaction
 );
 
 walletTransactionSchema.index({ userId: 1, createdAt: -1 });
+walletTransactionSchema.index(
+  { userId: 1, referenceId: 1, type: 1 },
+  { unique: true, partialFilterExpression: { referenceId: { $type: 'string' } } }
+);
 
 export const WalletTransaction: WalletTransactionModelType =
   (models.WalletTransaction as WalletTransactionModelType) ||

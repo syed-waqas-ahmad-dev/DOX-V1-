@@ -5,6 +5,7 @@
  */
 
 import { NextResponse, type NextRequest } from 'next/server';
+import { verifyOtp } from '@/lib/otp-store';
 
 export async function POST(req: NextRequest) {
   try {
@@ -18,16 +19,20 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // In demo environment, allow any 6 digit code or correct match
-    if (otp.length === 6) {
-      return NextResponse.json({
-        success: true,
-        verified: true,
-        message: 'Phone number verified successfully.',
-      });
+    const verification = verifyOtp(phone.trim(), otp.trim());
+
+    if (!verification.success) {
+      return NextResponse.json(
+        { error: verification.error || 'Invalid or expired OTP code.' },
+        { status: 400 }
+      );
     }
 
-    return NextResponse.json({ error: 'Invalid or expired OTP code.' }, { status: 400 });
+    return NextResponse.json({
+      success: true,
+      verified: true,
+      message: 'Phone number verified successfully.',
+    });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Verification failed';
     return NextResponse.json({ error: message }, { status: 500 });

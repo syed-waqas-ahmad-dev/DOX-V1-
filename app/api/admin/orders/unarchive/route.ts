@@ -1,65 +1,94 @@
+/**
+ * @file app/api/admin/orders/unarchive/route.ts
+ * @description Secure administrative endpoint to unarchive and restore orders.
+ * Strictly enforced RBAC: ADMIN or SUPER_ADMIN required.
+ * Input validation: Valid ObjectId format enforced.
+ * Database fail-closed: No mock fallbacks for modifying orders.
+ * Strict TypeScript: ZERO `any`.
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
+import { UserRole } from '@/types';
 import { connectToDatabase, isDatabaseConnected } from '@/lib/db/connect';
 import { Order } from '@/models/Order';
-import { MockDb } from '@/lib/db/mock-store';
+import { Types } from 'mongoose';
 
 export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
+    // 1. Authentication & RBAC Check
+    let session = null;
+    try {
+      session = await getServerSession(authOptions);
+    } catch {
+      session = null;
+    }
+    const sessionRole = (session?.user as { role?: string } | undefined)?.role;
+
+    if (!session?.user) {
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized: Authentication required.' },
+        { status: 401 }
+      );
+    }
+
+    const isAuthorized = sessionRole === UserRole.ADMIN || sessionRole === UserRole.SUPER_ADMIN;
+    if (!isAuthorized) {
+      return NextResponse.json(
+        { success: false, error: 'Forbidden: Administrative privileges required.' },
+        { status: 403 }
+      );
+    }
+
+    // 2. Input Validation
+    const body = (await req.json().catch(() => ({}))) as { orderId?: string };
     const { orderId } = body;
 
-    if (!orderId) {
+    if (!orderId || typeof orderId !== 'string' || orderId.trim().length === 0) {
       return NextResponse.json(
-        { success: false, error: 'Order ID is required' },
+        { success: false, error: 'Order ID is required.' },
         { status: 400 }
       );
     }
 
+    const cleanOrderId = orderId.trim();
+    if (!Types.ObjectId.isValid(cleanOrderId)) {
+      return NextResponse.json(
+        { success: false, error: 'Invalid Order ID format.' },
+        { status: 400 }
+      );
+    }
+
+    // 3. Database Connection & Fail-Closed Behavior
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
-      const mockUpdated = MockDb.unarchiveOrder(orderId);
-      if (!mockUpdated) {
-        return NextResponse.json(
-          { success: false, error: 'Order not found' },
-          { status: 404 }
-        );
-      }
-      return NextResponse.json({
-        success: true,
-        message: 'Order unarchived / restored successfully',
-        order: mockUpdated,
-      });
+      return NextResponse.json(
+        { success: false, error: 'Database service is currently unavailable.' },
+        { status: 503 }
+      );
     }
 
+    // 4. Atomic Order Update
     const order = await Order.findByIdAndUpdate(
-      orderId,
+      cleanOrderId,
       { $set: { archived: false } },
       { new: true }
     ).lean();
 
     if (!order) {
-      // Fallback to mock store
-      const mockUpdated = MockDb.unarchiveOrder(orderId);
-      if (mockUpdated) {
-        return NextResponse.json({
-          success: true,
-          message: 'Order unarchived / restored successfully',
-          order: mockUpdated,
-        });
-      }
-
       return NextResponse.json(
-        { success: false, error: 'Order not found' },
+        { success: false, error: 'Order not found.' },
         { status: 404 }
       );
     }
 
     return NextResponse.json({
       success: true,
-      message: 'Order unarchived / restored successfully',
+      message: 'Order unarchived successfully.',
       order,
     });
   } catch (error: unknown) {

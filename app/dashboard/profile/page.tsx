@@ -12,43 +12,72 @@ import { Header } from '@/components/layout/Header';
 import { AnnouncementBar } from '@/components/layout/AnnouncementBar';
 import { Footer } from '@/components/layout/Footer';
 import { getSession } from 'next-auth/react';
+import { generateMyReferralLink } from '@/actions/referral.actions';
 import { User, MapPin, Gift, Package, Copy, Check, ShieldCheck, Heart } from 'lucide-react';
 
 export default function UserProfilePage() {
   const [copied, setCopied] = useState(false);
-  const [session, setSession] = useState<{ user?: { name?: string | null; email?: string | null; role?: string | null } } | null>(null);
-  const referralCode = 'OX-HAMZA8';
+  const [session, setSession] = useState<{ user?: { id?: string; name?: string | null; email?: string | null; role?: string | null } } | null>(null);
+  const [referralLink, setReferralLink] = useState<string>('');
+  const [loadingLink, setLoadingLink] = useState<boolean>(true);
 
   useEffect(() => {
     let active = true;
     getSession()
-      .then((sess) => {
+      .then(async (sess) => {
         if (active && sess?.user) {
           setSession(sess as any);
+          try {
+            const linkRes = await generateMyReferralLink();
+            if (active && linkRes.success && linkRes.data?.link) {
+              setReferralLink(linkRes.data.link);
+            }
+          } catch {
+            // ignore
+          } finally {
+            if (active) setLoadingLink(false);
+          }
+        } else if (active) {
+          setLoadingLink(false);
         }
       })
-      .catch(() => {});
+      .catch(() => {
+        if (active) setLoadingLink(false);
+      });
     return () => {
       active = false;
     };
   }, []);
 
   const userRole = session?.user?.role;
-  const userEmail = session?.user?.email?.toLowerCase();
   const isAdmin = Boolean(
     session?.user && (
       userRole === 'admin' ||
       userRole === 'super_admin' ||
-      userRole === 'manager' ||
-      userEmail === 'ahmadsyedwaqas4@gmail.com' ||
-      userEmail === 'deeptrack.add@gmail.com'
+      userRole === 'manager'
     )
   );
 
   const handleCopyReferral = () => {
-    navigator.clipboard.writeText(`https://oxshoes.pk?ref=${referralCode}`);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    if (!referralLink) return;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(referralLink);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } else {
+      try {
+        const input = document.createElement('input');
+        input.value = referralLink;
+        document.body.appendChild(input);
+        input.select();
+        document.execCommand('copy');
+        document.body.removeChild(input);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } catch {
+        // fallback
+      }
+    }
   };
 
   return (
@@ -125,22 +154,29 @@ export default function UserProfilePage() {
           <div className="p-6 rounded-2xl bg-gradient-to-br from-neutral-950 to-neutral-900 text-white shadow-sm space-y-3">
             <div className="flex items-center gap-2 text-amber-400 text-xs font-black uppercase tracking-wider">
               <Gift className="h-4 w-4" />
-              <span>Earn PKR 500 Store Credit</span>
+              <span>Earn PKR 200 Store Credit</span>
             </div>
             <h3 className="text-lg font-black uppercase tracking-tight">Invite Friends & Family</h3>
-            <p className="text-xs text-neutral-300">
-              Share your personal link. They get 10% off their first pair and you get PKR 500 credit upon delivery!
+            <p className="text-xs text-neutral-300 leading-relaxed">
+              Share your personal link. They get 10% off their first pair and you get PKR 200 credit upon delivery!
             </p>
             <div className="flex items-center gap-2 pt-2">
               <input
                 type="text"
                 readOnly
-                value={`https://oxshoes.pk?ref=${referralCode}`}
-                className="w-full px-3 py-2 rounded-lg bg-white/10 text-xs text-neutral-200 font-mono border border-white/20"
+                value={
+                  referralLink
+                    ? referralLink
+                    : loadingLink
+                    ? 'Loading personal referral link...'
+                    : 'Sign in to generate referral link'
+                }
+                className="w-full px-3 py-2 rounded-lg bg-white/10 text-xs text-neutral-200 font-mono border border-white/20 select-all"
               />
               <button
                 onClick={handleCopyReferral}
-                className="p-2 rounded-lg bg-white text-neutral-950 hover:bg-neutral-200 font-bold transition-colors"
+                disabled={!referralLink}
+                className="p-2 rounded-lg bg-white text-neutral-950 hover:bg-neutral-200 font-bold transition-colors disabled:opacity-50"
               >
                 {copied ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
               </button>

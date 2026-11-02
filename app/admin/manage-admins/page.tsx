@@ -6,13 +6,10 @@ import { ManageAdminsClient } from './ManageAdminsClient';
 
 export default async function ManageAdminsPage() {
   const session = await getServerSession(authOptions);
-  const sessionEmail = session?.user?.email?.toLowerCase();
   const sessionRole = (session?.user as { role?: string } | undefined)?.role;
 
-  // Access control strictly checks super_admin (or primary superadmin email)
-  const isSuperAdmin =
-    sessionRole === 'super_admin' ||
-    sessionEmail === 'ahmadsyedwaqas4@gmail.com';
+  // Access control strictly checks super_admin
+  const isSuperAdmin = sessionRole === 'super_admin';
 
   if (!isSuperAdmin) {
     redirect('/admin?error=unauthorized');

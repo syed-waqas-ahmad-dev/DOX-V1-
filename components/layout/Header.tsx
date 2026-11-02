@@ -132,10 +132,10 @@ export function Header({ onOpenSearch }: HeaderProps) {
 
           {/* Right Action Icons & Mobile Menu Button (shifted to right side) */}
           <div className="flex items-center gap-2 sm:gap-3 md:gap-4 shrink-0">
-            {/* Search Trigger */}
+            {/* Search Trigger (Desktop only) */}
             <button
               onClick={onOpenSearch}
-              className="flex items-center gap-2 p-2 sm:px-3 sm:py-2 rounded-full bg-neutral-100 hover:bg-neutral-200 text-neutral-600 text-xs font-medium transition-colors"
+              className="hidden lg:flex items-center gap-2 p-2 sm:px-3 sm:py-2 rounded-full bg-neutral-100 hover:bg-neutral-200 text-neutral-600 text-xs font-medium transition-colors"
               title="Search shoes (Cmd + K)"
               aria-label="Search shoes"
             >
@@ -159,10 +159,10 @@ export function Header({ onOpenSearch }: HeaderProps) {
               <span>{currentIsUrdu ? 'EN' : 'اردو'}</span>
             </button>
 
-            {/* Wishlist Link */}
+            {/* Wishlist Link (Desktop only) */}
             <Link
               href="/wishlist"
-              className="p-2 rounded-full hover:bg-neutral-100 text-neutral-700 transition-colors relative shrink-0"
+              className="hidden lg:flex p-2 rounded-full hover:bg-neutral-100 text-neutral-700 transition-colors relative shrink-0"
               aria-label="Wishlist"
               title="Saved Shoes"
             >
@@ -189,10 +189,10 @@ export function Header({ onOpenSearch }: HeaderProps) {
               )}
             </Link>
 
-            {/* Cart Drawer Launcher - Intact Bag Icon */}
+            {/* Cart Drawer Launcher - Intact Bag Icon (Desktop only) */}
             <button
               onClick={openCart}
-              className="p-2 rounded-full hover:bg-neutral-100 text-neutral-900 transition-colors relative shrink-0 cursor-pointer"
+              className="hidden lg:flex p-2 rounded-full hover:bg-neutral-100 text-neutral-900 transition-colors relative shrink-0 cursor-pointer items-center justify-center"
               aria-label="Shopping Cart"
               title="Cart Drawer"
             >
@@ -342,6 +342,59 @@ export function Header({ onOpenSearch }: HeaderProps) {
               aria-label={mobileMenuOpen ? 'Close Navigation Menu' : 'Open Navigation Menu'}
             >
               {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Second Mobile Bar: Wishlist (left), Search box (center, flexible), Cart (right) */}
+      <div className="lg:hidden bg-white border-t border-neutral-100">
+        <div className="flex items-center justify-between gap-2.5 w-full px-3 py-2">
+          {/* Wishlist wrapper */}
+          <div className="flex shrink-0 items-center justify-center">
+            <Link
+              href="/wishlist"
+              className="p-2 rounded-full hover:bg-neutral-100 text-neutral-800 transition-colors relative"
+              aria-label="Wishlist"
+              title="Saved Shoes"
+            >
+              <Heart className="h-5 w-5" />
+              {wishlistCount > 0 && (
+                <span className="absolute top-0.5 right-0.5 h-4 w-4 bg-red-600 text-white rounded-full text-[10px] font-bold flex items-center justify-center">
+                  {wishlistCount}
+                </span>
+              )}
+            </Link>
+          </div>
+
+          {/* Search wrapper */}
+          <div className="flex-1 min-w-0">
+            <button
+              onClick={onOpenSearch}
+              className="w-full rounded-full bg-neutral-100 hover:bg-neutral-200/70 px-3.5 py-2 outline-none flex items-center gap-2 text-neutral-500 text-sm transition-colors text-left cursor-pointer"
+              aria-label="Search shoes"
+            >
+              <Search className="h-4 w-4 text-neutral-500 shrink-0" />
+              <span className="truncate">
+                {currentIsUrdu ? 'تلاش کریں...' : 'Search...'}
+              </span>
+            </button>
+          </div>
+
+          {/* Cart wrapper */}
+          <div className="flex shrink-0 items-center justify-center">
+            <button
+              onClick={openCart}
+              className="p-2 rounded-full hover:bg-neutral-100 text-neutral-900 transition-colors relative cursor-pointer"
+              aria-label="Shopping Cart"
+              title="Cart Drawer"
+            >
+              <ShoppingBag className="h-5 w-5" />
+              {totalCartCount > 0 && (
+                <span className="absolute top-0.5 right-0.5 h-4 w-4 bg-neutral-950 text-white rounded-full text-[10px] font-bold flex items-center justify-center">
+                  {totalCartCount}
+                </span>
+              )}
             </button>
           </div>
         </div>

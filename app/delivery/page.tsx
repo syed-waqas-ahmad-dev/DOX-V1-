@@ -15,6 +15,8 @@ import Image from 'next/image';
 import { Logo } from '@/components/layout/Logo';
 import {
   riderLogin,
+  riderLogout,
+  getCurrentRiderProfile,
   getRiderAssignments,
   updateRiderAssignmentStatus,
   updateRiderLocation,
@@ -88,23 +90,29 @@ export default function RiderTerminalPage() {
     setTimeout(() => setToastMessage(null), 4000);
   };
 
-  // Load session from localStorage on mount
+  // Validate genuine server session on mount
   useEffect(() => {
     let active = true;
-    Promise.resolve().then(() => {
-      if (!active) return;
-      try {
-        const saved = localStorage.getItem(RIDER_STORAGE_KEY);
-        if (saved) {
-          const parsed = JSON.parse(saved) as IDeliveryPartner;
-          setPartner(parsed);
+    getCurrentRiderProfile()
+      .then((res) => {
+        if (!active) return;
+        if (res.success && res.data) {
+          setPartner(res.data);
+          localStorage.setItem(RIDER_STORAGE_KEY, JSON.stringify(res.data));
+        } else {
+          localStorage.removeItem(RIDER_STORAGE_KEY);
+          setPartner(null);
         }
-      } catch {
-        // Ignore
-      } finally {
-        setLoading(false);
-      }
-    });
+      })
+      .catch(() => {
+        if (!active) return;
+        localStorage.removeItem(RIDER_STORAGE_KEY);
+        setPartner(null);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
     return () => {
       active = false;
     };
@@ -117,6 +125,9 @@ export default function RiderTerminalPage() {
       const res = await getRiderAssignments(partnerId);
       if (res.success && res.data) {
         setAssignments(res.data);
+      } else if (!res.success && res.error?.includes('Unauthorized')) {
+        localStorage.removeItem(RIDER_STORAGE_KEY);
+        setPartner(null);
       }
     } catch {
       // Ignore
@@ -132,6 +143,9 @@ export default function RiderTerminalPage() {
         .then((res) => {
           if (active && res.success && res.data) {
             setAssignments(res.data);
+          } else if (active && !res.success && res.error?.includes('Unauthorized')) {
+            localStorage.removeItem(RIDER_STORAGE_KEY);
+            setPartner(null);
           }
         })
         .catch(() => {});
@@ -167,30 +181,13 @@ export default function RiderTerminalPage() {
     }
   };
 
-  // Quick Demo Login
-  const handleDemoLogin = async (demoPhone: string) => {
-    setPhone(demoPhone);
-    setPassword('rider123');
-    setLoggingIn(true);
-    setLoginError(null);
-    try {
-      const res = await riderLogin(demoPhone, 'rider123');
-      if (res.success) {
-        setPartner(res.data);
-        localStorage.setItem(RIDER_STORAGE_KEY, JSON.stringify(res.data));
-        showToast('success', res.message || 'Welcome to OX Express!');
-      } else {
-        setLoginError(res.error || 'Demo login failed.');
-      }
-    } catch {
-      setLoginError('Connection error.');
-    } finally {
-      setLoggingIn(false);
-    }
-  };
-
   // Handle Logout
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      await riderLogout();
+    } catch {
+      // Ignore
+    }
     localStorage.removeItem(RIDER_STORAGE_KEY);
     setPartner(null);
     setAssignments([]);
@@ -456,31 +453,6 @@ export default function RiderTerminalPage() {
                 )}
               </button>
             </form>
-
-            {/* Quick Demo Logins for instant evaluation */}
-            <div className="pt-4 border-t border-neutral-800 space-y-2">
-              <span className="text-[11px] font-bold text-neutral-500 uppercase tracking-widest block text-center">
-                Quick Demo Rider Logins (1-Click)
-              </span>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => handleDemoLogin('03001234567')}
-                  className="p-2.5 rounded-xl bg-neutral-950 hover:bg-neutral-800 border border-neutral-800 text-left transition-colors"
-                >
-                  <span className="text-xs font-bold text-white block">Tariq Mehmood</span>
-                  <span className="text-[10px] text-amber-400">Peshawar · 03001234567</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleDemoLogin('03219876543')}
-                  className="p-2.5 rounded-xl bg-neutral-950 hover:bg-neutral-800 border border-neutral-800 text-left transition-colors"
-                >
-                  <span className="text-xs font-bold text-white block">Ali Raza</span>
-                  <span className="text-[10px] text-amber-400">Lahore · 03219876543</span>
-                </button>
-              </div>
-            </div>
           </div>
         </main>
 

@@ -18,7 +18,7 @@ import { Footer } from '@/components/layout/Footer';
 import { OrderTransitMap } from '@/components/maps/OrderTransitMap';
 import { formatPKR } from '@/lib/formatters/currency';
 import { formatDate } from '@/lib/formatters/date';
-import type { IOrder } from '@/types';
+import type { IOrder, ITrackOrderDTO } from '@/types';
 import {
   Search,
   Truck,
@@ -38,67 +38,36 @@ function TrackOrderContent() {
   const initialOrder = searchParams?.get('order') || '';
 
   const [inputVal, setInputVal] = useState(initialOrder);
-  const [order, setOrder] = useState<IOrder | null>(null);
+  const [verificationVal, setVerificationVal] = useState('');
+  const [order, setOrder] = useState<ITrackOrderDTO | null>(null);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const handleSearch = async (queryToSearch: string) => {
-    const q = queryToSearch.trim().toUpperCase();
-    if (!q) return;
+  const handleSearch = async (orderNum: string, verification: string) => {
+    const o = orderNum.trim().toUpperCase();
+    const v = verification.trim();
+
+    if (!o || !v) {
+      setErrorMsg('Both Order Number and Verification (Email/Phone) are required.');
+      return;
+    }
 
     setLoading(true);
     setErrorMsg(null);
 
-    // Try track by order number
-    const res = await trackOrder(q);
+    const res = await trackOrder(o, v);
     if (res.success) {
-      setOrder(res.data);
+      setOrder(res.data as any);
     } else {
-      // Try ID lookup fallback
-      const idRes = await getOrderById(q);
-      if (idRes.success) {
-        setOrder(idRes.data);
-      } else {
-        setErrorMsg(
-          idRes.error ||
-            `No order found for reference "${q}". Please check your order confirmation SMS or email.`
-        );
-        setOrder(null);
-      }
+      setErrorMsg(res.error || 'No order found or verification failed.');
+      setOrder(null);
     }
     setLoading(false);
   };
 
-  useEffect(() => {
-    if (!initialOrder) return;
-    let active = true;
-    const q = initialOrder.trim().toUpperCase();
-    trackOrder(q).then((res) => {
-      if (!active) return;
-      if (res.success) {
-        setOrder(res.data);
-      } else {
-        getOrderById(q).then((idRes) => {
-          if (!active) return;
-          if (idRes.success) {
-            setOrder(idRes.data);
-          } else {
-            setErrorMsg(
-              idRes.error ||
-                `No order found for reference "${q}". Please check your order confirmation SMS or email.`
-            );
-            setOrder(null);
-          }
-        });
-      }
-    });
-    return () => {
-      active = false;
-    };
-  }, [initialOrder]);
 
   const destCity =
-    (order?.shippingAddress as unknown as Record<string, string> | undefined)?.city || 'Lahore';
+    (order as any)?.shippingAddress?.city || 'Lahore';
 
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 py-10 w-full flex-1 space-y-8">
@@ -111,7 +80,7 @@ function TrackOrderContent() {
           Track Your OX Shoes Shipment
         </h1>
         <p className="text-xs sm:text-sm text-neutral-600 max-w-md mx-auto">
-          Enter your Order Reference Number (e.g., <strong className="font-mono">OX-2026-XXXX</strong>) to view real-time courier status and route.
+          Enter your Order Number and the Email or Phone used during checkout.
         </p>
       </div>
 
@@ -120,30 +89,44 @@ function TrackOrderContent() {
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            handleSearch(inputVal);
+            handleSearch(inputVal, verificationVal);
           }}
-          className="flex items-center gap-2 bg-white p-2 rounded-2xl border border-neutral-300 shadow-md focus-within:border-neutral-950 focus-within:ring-2 focus-within:ring-neutral-950/10 transition-all"
+          className="space-y-3"
         >
-          <Search className="h-5 w-5 text-neutral-400 ml-3 shrink-0" />
-          <input
-            type="text"
-            placeholder="e.g. OX-2026-4821 or order ID"
-            value={inputVal}
-            onChange={(e) => setInputVal(e.target.value)}
-            className="w-full px-2 py-2 text-sm bg-transparent border-none outline-none text-neutral-950 placeholder:text-neutral-400 font-medium"
-          />
+          <div className="flex items-center gap-2 bg-white p-2 rounded-2xl border border-neutral-300 shadow-md focus-within:border-neutral-950 focus-within:ring-2 focus-within:ring-neutral-950/10 transition-all">
+            <Package className="h-5 w-5 text-neutral-400 ml-3 shrink-0" />
+            <input
+              type="text"
+              placeholder="Order Number (e.g. OX-2026-4821)"
+              value={inputVal}
+              onChange={(e) => setInputVal(e.target.value)}
+              className="w-full px-2 py-2 text-sm bg-transparent border-none outline-none text-neutral-950 placeholder:text-neutral-400 font-medium"
+            />
+          </div>
+
+          <div className="flex items-center gap-2 bg-white p-2 rounded-2xl border border-neutral-300 shadow-md focus-within:border-neutral-950 focus-within:ring-2 focus-within:ring-neutral-950/10 transition-all">
+            <ShieldCheck className="h-5 w-5 text-neutral-400 ml-3 shrink-0" />
+            <input
+              type="text"
+              placeholder="Verification Email or Phone"
+              value={verificationVal}
+              onChange={(e) => setVerificationVal(e.target.value)}
+              className="w-full px-2 py-2 text-sm bg-transparent border-none outline-none text-neutral-950 placeholder:text-neutral-400 font-medium"
+            />
+          </div>
+
           <button
             type="submit"
             disabled={loading}
-            className="px-6 py-2.5 rounded-xl bg-neutral-950 hover:bg-neutral-800 text-white text-xs font-bold uppercase tracking-wider shrink-0 transition-colors"
+            className="w-full py-3.5 rounded-2xl bg-neutral-950 hover:bg-neutral-800 text-white text-sm font-bold uppercase tracking-widest transition-colors shadow-lg disabled:opacity-50"
           >
-            {loading ? 'Searching...' : 'Track'}
+            {loading ? 'Verifying Identity...' : 'Track Shipment'}
           </button>
         </form>
 
         {errorMsg && (
-          <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-xs flex items-center gap-2">
-            <AlertCircle className="h-4 w-4 shrink-0" />
+          <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-2xl text-red-700 text-xs flex items-center gap-3">
+            <AlertCircle className="h-5 w-5 shrink-0" />
             <span>{errorMsg}</span>
           </div>
         )}

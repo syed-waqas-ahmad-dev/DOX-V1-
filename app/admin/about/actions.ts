@@ -19,9 +19,9 @@ import mongoose from 'mongoose';
 
 // Initialize Cloudinary v2 SDK
 cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME?.trim(),
+  api_key: process.env.CLOUDINARY_API_KEY?.trim(),
+  api_secret: process.env.CLOUDINARY_API_SECRET?.trim(),
   secure: true,
 });
 
@@ -39,7 +39,7 @@ function isValidObjectId(id: string | null | undefined): boolean {
 /**
  * Helper to upload buffer directly to Cloudinary without disk persistence.
  * Strictly streams media to Cloudinary and returns hosted asset URLs.
- * Throws controlled errors if Cloudinary credentials are missing or API upload fails.
+ * Throws controlled errors with secure diagnostic server logging if Cloudinary API upload fails.
  */
 async function uploadBufferToCloudinary(
   buffer: Buffer,
@@ -57,6 +57,14 @@ async function uploadBufferToCloudinary(
     );
   }
 
+  // Synchronize Cloudinary SDK configuration using validated, trimmed credentials
+  cloudinary.config({
+    cloud_name: cloudName,
+    api_key: apiKey,
+    api_secret: apiSecret,
+    secure: true,
+  });
+
   return new Promise<{ secure_url: string; public_id: string }>((resolve, reject) => {
     const uploadStream = cloudinary.uploader.upload_stream(
       {
@@ -65,19 +73,51 @@ async function uploadBufferToCloudinary(
       },
       (error, res) => {
         if (error || !res) {
-          reject(
-            new Error(
-              `Cloudinary upload failed: ${error?.message || 'Empty response received from Cloudinary API'}`
-            )
-          );
+          const errObj = (error || {}) as Record<string, unknown>;
+          const httpCode = typeof errObj.http_code === 'number' ? errObj.http_code : undefined;
+          const rawMessage = error?.message || 'Empty response received from Cloudinary API';
+          const errorName = error?.name || 'CloudinaryError';
+          
+          // Safely extract Cloudinary's custom error response header if present
+          const headers = (errObj.headers || {}) as Record<string, unknown>;
+          const xCldError =
+            (typeof errObj.x_cld_error === 'string' ? errObj.x_cld_error : undefined) ||
+            (typeof headers['x-cld-error'] === 'string' ? headers['x-cld-error'] : undefined);
+
+          // SECURE SERVER-SIDE DIAGNOSTIC LOGGING
+          // Strictly excludes secrets, credentials, tokens, and buffer contents.
+          console.error('[Cloudinary SDK Error Diagnostic]:', {
+            message: rawMessage,
+            http_code: httpCode,
+            name: errorName,
+            x_cld_error: xCldError,
+            cloudNameConfigured: Boolean(cloudName),
+            cloudNameLength: cloudName ? cloudName.length : 0,
+            apiKeyLength: apiKey ? apiKey.length : 0,
+            apiSecretConfigured: Boolean(apiSecret),
+            folder,
+            resourceType,
+            mimeType,
+            bufferSizeBytes: buffer.length,
+          });
+
+          let userFacingMessage = `Cloudinary upload failed: ${rawMessage}`;
+          if (httpCode === 403 || rawMessage.includes('403')) {
+            userFacingMessage =
+              'Cloudinary upload failed (HTTP 403 Forbidden): Access denied by Cloudinary API. Please verify that CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET in environment variables match an active Cloudinary account.';
+          }
+
+          reject(new Error(userFacingMessage));
           return;
         }
+
         resolve({
           secure_url: res.secure_url,
           public_id: res.public_id,
         });
       }
     );
+
     uploadStream.end(buffer);
   });
 }

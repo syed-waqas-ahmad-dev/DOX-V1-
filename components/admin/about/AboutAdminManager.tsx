@@ -406,39 +406,39 @@ export function AboutAdminManager({ initialAbout, initialGallery }: AboutAdminMa
   };
 
   return (
-    <div className="min-h-screen bg-neutral-950 text-white p-4 sm:p-6 lg:p-10 font-sans selection:bg-amber-500 selection:text-neutral-950">
-      <div className="max-w-6xl mx-auto space-y-10">
+    <div className="min-h-screen bg-neutral-950 text-white p-3 sm:p-6 lg:p-10 font-sans selection:bg-amber-500 selection:text-neutral-950 max-w-full overflow-x-hidden">
+      <div className="max-w-6xl mx-auto space-y-8 sm:space-y-10 w-full min-w-0">
         {/* Top Header Bar */}
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-6 border-b border-neutral-800">
-          <div>
-            <div className="flex items-center gap-2 mb-1">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-6 border-b border-neutral-800 w-full min-w-0">
+          <div className="min-w-0 w-full sm:w-auto">
+            <div className="flex items-center gap-2 mb-1 flex-wrap">
               <span className="text-xs font-bold uppercase tracking-widest text-amber-500 bg-amber-500/10 px-2.5 py-0.5 rounded border border-amber-500/30">
                 Super Admin Master Control
               </span>
             </div>
-            <h1 className="text-2xl sm:text-3xl font-black text-white">
+            <h1 className="text-xl sm:text-3xl font-black text-white break-words">
               About Page & Media Gallery CRUD
             </h1>
-            <p className="text-sm text-neutral-400 mt-1">
-              Direct Cloudinary streaming to <code className="text-amber-400">dawood-ox/about</code> and{' '}
-              <code className="text-amber-400">dawood-ox/gallery</code> with zero filesystem writes.
+            <p className="text-xs sm:text-sm text-neutral-400 mt-1 break-words">
+              Direct Cloudinary streaming to <code className="text-amber-400 break-all">dawood-ox/about</code> and{' '}
+              <code className="text-amber-400 break-all">dawood-ox/gallery</code> with zero filesystem writes.
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2.5 sm:gap-3 w-full sm:w-auto">
             <Link
               href="/admin"
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-neutral-300 text-xs font-semibold border border-neutral-800 transition"
+              className="inline-flex items-center justify-center gap-1.5 px-3.5 sm:px-4 py-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-neutral-300 text-xs font-semibold border border-neutral-800 transition flex-1 sm:flex-none"
             >
-              <ArrowLeft className="w-4 h-4" />
+              <ArrowLeft className="w-4 h-4 shrink-0" />
               <span>Admin Dashboard</span>
             </Link>
             <Link
               href="/about"
               target="_blank"
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-neutral-950 text-xs font-bold transition shadow-lg shadow-amber-500/20"
+              className="inline-flex items-center justify-center gap-1.5 px-3.5 sm:px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-neutral-950 text-xs font-bold transition shadow-lg shadow-amber-500/20 flex-1 sm:flex-none"
             >
-              <ExternalLink className="w-4 h-4" />
+              <ExternalLink className="w-4 h-4 shrink-0" />
               <span>View Live About Page</span>
             </Link>
           </div>
@@ -447,7 +447,7 @@ export function AboutAdminManager({ initialAbout, initialGallery }: AboutAdminMa
         {/* Global Feedback Banner */}
         {aboutMessage && (
           <div
-            className={`p-4 rounded-2xl flex items-center gap-3 border ${
+            className={`p-4 rounded-2xl flex items-center gap-3 border min-w-0 ${
               aboutMessage.type === 'success'
                 ? 'bg-emerald-950/40 border-emerald-800 text-emerald-300'
                 : 'bg-red-950/40 border-red-800 text-red-300'
@@ -458,10 +458,10 @@ export function AboutAdminManager({ initialAbout, initialGallery }: AboutAdminMa
             ) : (
               <AlertCircle className="w-5 h-5 flex-shrink-0 text-red-400" />
             )}
-            <p className="text-sm font-medium">{aboutMessage.text}</p>
+            <p className="text-xs sm:text-sm font-medium break-words flex-1 min-w-0">{aboutMessage.text}</p>
             <button
               onClick={() => setAboutMessage(null)}
-              className="ml-auto text-neutral-400 hover:text-white"
+              className="ml-auto text-neutral-400 hover:text-white shrink-0"
             >
               <X className="w-4 h-4" />
             </button>
@@ -469,23 +469,23 @@ export function AboutAdminManager({ initialAbout, initialGallery }: AboutAdminMa
         )}
 
         {/* SECTION 1: ABOUT PAGE CONFIG (HERO, MANAGER & TEAM) */}
-        <form onSubmit={handleSaveAboutPage} className="space-y-8">
-          <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-6 sm:p-8 space-y-8 shadow-xl">
-            <div className="flex items-center justify-between pb-4 border-b border-neutral-800">
-              <div>
-                <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                  <ImageIcon className="w-5 h-5 text-amber-500" />
-                  <span>Section 1: Hero Imagery Configuration</span>
+        <form onSubmit={handleSaveAboutPage} className="space-y-8 w-full min-w-0">
+          <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-4 sm:p-6 lg:p-8 space-y-6 sm:space-y-8 shadow-xl w-full min-w-0">
+            <div className="flex items-center justify-between pb-4 border-b border-neutral-800 min-w-0">
+              <div className="min-w-0">
+                <h2 className="text-lg sm:text-xl font-bold text-white flex items-center gap-2">
+                  <ImageIcon className="w-5 h-5 text-amber-500 shrink-0" />
+                  <span className="truncate">Section 1: Hero Imagery Configuration</span>
                 </h2>
-                <p className="text-xs text-neutral-400 mt-0.5">
+                <p className="text-xs text-neutral-400 mt-0.5 break-words">
                   Full-width shopfront background + 2 small overlapping interior images (rotated 6° / -6°).
                 </p>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6 min-w-0">
               {/* Hero Image 0: Background Shopfront */}
-              <div className="bg-neutral-950 p-5 rounded-2xl border border-neutral-800 space-y-4">
+              <div className="bg-neutral-950 p-4 sm:p-5 rounded-2xl border border-neutral-800 space-y-4 min-w-0">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold uppercase text-amber-500">Shopfront Background</span>
                   <span className="text-[10px] text-neutral-500">Full Width</span>
@@ -514,13 +514,13 @@ export function AboutAdminManager({ initialAbout, initialGallery }: AboutAdminMa
                     type="file"
                     accept="image/*"
                     onChange={(e) => handleHeroImageChange(0, e.target.files?.[0] || null)}
-                    className="w-full text-xs text-neutral-400 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-neutral-800 file:text-neutral-300 hover:file:bg-neutral-700 cursor-pointer"
+                    className="w-full text-xs text-neutral-400 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-neutral-800 file:text-neutral-300 hover:file:bg-neutral-700 cursor-pointer max-w-full overflow-hidden"
                   />
                 </div>
               </div>
 
               {/* Hero Image 1: Interior Tilt Left */}
-              <div className="bg-neutral-950 p-5 rounded-2xl border border-neutral-800 space-y-4">
+              <div className="bg-neutral-950 p-4 sm:p-5 rounded-2xl border border-neutral-800 space-y-4 min-w-0">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold uppercase text-amber-500">Interior Snapshot 1</span>
                   <span className="text-[10px] text-neutral-500">Rotate -6°</span>
@@ -549,13 +549,13 @@ export function AboutAdminManager({ initialAbout, initialGallery }: AboutAdminMa
                     type="file"
                     accept="image/*"
                     onChange={(e) => handleHeroImageChange(1, e.target.files?.[0] || null)}
-                    className="w-full text-xs text-neutral-400 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-neutral-800 file:text-neutral-300 hover:file:bg-neutral-700 cursor-pointer"
+                    className="w-full text-xs text-neutral-400 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-neutral-800 file:text-neutral-300 hover:file:bg-neutral-700 cursor-pointer max-w-full overflow-hidden"
                   />
                 </div>
               </div>
 
               {/* Hero Image 2: Interior Tilt Right */}
-              <div className="bg-neutral-950 p-5 rounded-2xl border border-neutral-800 space-y-4">
+              <div className="bg-neutral-950 p-4 sm:p-5 rounded-2xl border border-neutral-800 space-y-4 min-w-0">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold uppercase text-amber-500">Interior Snapshot 2</span>
                   <span className="text-[10px] text-neutral-500">Rotate +6°</span>
@@ -584,23 +584,23 @@ export function AboutAdminManager({ initialAbout, initialGallery }: AboutAdminMa
                     type="file"
                     accept="image/*"
                     onChange={(e) => handleHeroImageChange(2, e.target.files?.[0] || null)}
-                    className="w-full text-xs text-neutral-400 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-neutral-800 file:text-neutral-300 hover:file:bg-neutral-700 cursor-pointer"
+                    className="w-full text-xs text-neutral-400 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-neutral-800 file:text-neutral-300 hover:file:bg-neutral-700 cursor-pointer max-w-full overflow-hidden"
                   />
                 </div>
               </div>
             </div>
 
             {/* SECTION 2: MANAGER PROFILE & TEAM STATS */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 pt-6 border-t border-neutral-800">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 sm:gap-8 pt-6 border-t border-neutral-800 min-w-0">
               {/* Manager Details */}
-              <div className="lg:col-span-6 space-y-5">
-                <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-amber-500 inline-block" />
+              <div className="lg:col-span-6 space-y-5 min-w-0">
+                <h3 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-amber-500 inline-block shrink-0" />
                   <span>Store Manager Profile</span>
                 </h3>
 
-                <div className="flex items-center gap-5">
-                  <div className="w-24 h-24 rounded-2xl border-2 border-amber-500 relative overflow-hidden bg-neutral-800 flex-shrink-0">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 sm:gap-5 min-w-0">
+                  <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl border-2 border-amber-500 relative overflow-hidden bg-neutral-800 flex-shrink-0">
                     <Image
                       src={
                         managerPreview ||
@@ -613,22 +613,22 @@ export function AboutAdminManager({ initialAbout, initialGallery }: AboutAdminMa
                       referrerPolicy="no-referrer"
                     />
                   </div>
-                  <div className="flex-1">
+                  <div className="flex-1 min-w-0 w-full">
                     <label className="block text-xs text-neutral-400 mb-1">Upload Manager Photo (Max 10MB)</label>
                     <input
                       type="file"
                       accept="image/*"
                       onChange={handleManagerImageChange}
-                      className="w-full text-xs text-neutral-400 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-neutral-800 file:text-neutral-300 hover:file:bg-neutral-700 cursor-pointer"
+                      className="w-full text-xs text-neutral-400 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-neutral-800 file:text-neutral-300 hover:file:bg-neutral-700 cursor-pointer max-w-full overflow-hidden"
                     />
-                    <p className="text-[11px] text-neutral-500 mt-1">
-                      Direct Cloudinary stream to folder: <code className="text-amber-400">dawood-ox/about</code>
+                    <p className="text-[11px] text-neutral-500 mt-1 break-words">
+                      Direct Cloudinary stream to folder: <code className="text-amber-400 break-all">dawood-ox/about</code>
                     </p>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 min-w-0">
+                  <div className="min-w-0">
                     <label className="block text-xs font-semibold text-neutral-300 mb-1">Manager Full Name</label>
                     <input
                       type="text"
@@ -639,7 +639,7 @@ export function AboutAdminManager({ initialAbout, initialGallery }: AboutAdminMa
                     />
                   </div>
 
-                  <div>
+                  <div className="min-w-0">
                     <label className="block text-xs font-semibold text-neutral-300 mb-1">Direct Phone</label>
                     <input
                       type="text"
@@ -651,7 +651,7 @@ export function AboutAdminManager({ initialAbout, initialGallery }: AboutAdminMa
                   </div>
                 </div>
 
-                <div>
+                <div className="min-w-0">
                   <label className="block text-xs font-semibold text-neutral-300 mb-1">Manager Bio & Story</label>
                   <textarea
                     rows={4}
@@ -663,17 +663,17 @@ export function AboutAdminManager({ initialAbout, initialGallery }: AboutAdminMa
               </div>
 
               {/* Team Statistics Manager */}
-              <div className="lg:col-span-6 space-y-5">
-                <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-amber-500 inline-block" />
+              <div className="lg:col-span-6 space-y-5 min-w-0">
+                <h3 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-amber-500 inline-block shrink-0" />
                   <span>2x2 Team Stat Categories</span>
                 </h3>
 
-                <div className="space-y-3">
+                <div className="space-y-3 min-w-0">
                   {teamStats.map((item, idx) => (
                     <div
                       key={idx}
-                      className="flex items-center gap-3 bg-neutral-950 p-3 rounded-xl border border-neutral-800"
+                      className="flex items-center gap-2 sm:gap-3 bg-neutral-950 p-2.5 sm:p-3 rounded-xl border border-neutral-800 min-w-0"
                     >
                       <input
                         type="text"
@@ -683,34 +683,35 @@ export function AboutAdminManager({ initialAbout, initialGallery }: AboutAdminMa
                           updated[idx].role = e.target.value;
                           setTeamStats(updated);
                         }}
-                        className="flex-1 bg-neutral-900 border border-neutral-800 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-amber-500"
+                        className="flex-1 min-w-0 bg-neutral-900 border border-neutral-800 rounded-lg px-2.5 sm:px-3 py-1.5 text-xs text-white focus:outline-none focus:border-amber-500"
                       />
                       <input
                         type="number"
                         min="0"
                         value={item.count}
                         onChange={(e) => handleUpdateTeamCount(idx, Number(e.target.value) || 0)}
-                        className="w-20 bg-neutral-900 border border-neutral-800 rounded-lg px-3 py-1.5 text-xs text-amber-500 font-bold text-center focus:outline-none focus:border-amber-500"
+                        className="w-16 sm:w-20 bg-neutral-900 border border-neutral-800 rounded-lg px-2 sm:px-3 py-1.5 text-xs text-amber-500 font-bold text-center focus:outline-none focus:border-amber-500 shrink-0"
                       />
                       <button
                         type="button"
                         onClick={() => handleRemoveTeamRole(idx)}
-                        className="p-1.5 text-neutral-500 hover:text-red-400 hover:bg-red-950/40 rounded-lg transition"
+                        className="p-1.5 text-neutral-500 hover:text-red-400 hover:bg-red-950/40 rounded-lg transition shrink-0"
+                        aria-label="Delete role"
                       >
-                        <Trash2 className="w-4 h-4" />
+                        <Trash2 className="w-4 h-4 shrink-0" />
                       </button>
                     </div>
                   ))}
                 </div>
 
                 {/* Add new stat row */}
-                <div className="flex items-center gap-3 pt-2">
+                <div className="flex items-center gap-2 sm:gap-3 pt-2 min-w-0">
                   <input
                     type="text"
                     placeholder="Role (e.g. Master Artisans)"
                     value={newRoleName}
                     onChange={(e) => setNewRoleName(e.target.value)}
-                    className="flex-1 bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
+                    className="flex-1 min-w-0 bg-neutral-950 border border-neutral-800 rounded-xl px-2.5 sm:px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
                   />
                   <input
                     type="number"
@@ -718,14 +719,14 @@ export function AboutAdminManager({ initialAbout, initialGallery }: AboutAdminMa
                     placeholder="Count"
                     value={newRoleCount}
                     onChange={(e) => setNewRoleCount(Number(e.target.value))}
-                    className="w-20 bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2 text-xs text-white text-center focus:outline-none focus:border-amber-500"
+                    className="w-16 sm:w-20 bg-neutral-950 border border-neutral-800 rounded-xl px-2 sm:px-3 py-2 text-xs text-white text-center focus:outline-none focus:border-amber-500 shrink-0"
                   />
                   <button
                     type="button"
                     onClick={handleAddTeamRole}
-                    className="px-3 py-2 bg-neutral-800 hover:bg-neutral-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1 transition"
+                    className="px-3 py-2 bg-neutral-800 hover:bg-neutral-700 text-white rounded-xl text-xs font-semibold flex items-center justify-center gap-1 transition shrink-0"
                   >
-                    <Plus className="w-4 h-4 text-amber-500" />
+                    <Plus className="w-4 h-4 text-amber-500 shrink-0" />
                     <span>Add</span>
                   </button>
                 </div>
@@ -733,20 +734,20 @@ export function AboutAdminManager({ initialAbout, initialGallery }: AboutAdminMa
             </div>
 
             {/* Save Button */}
-            <div className="pt-6 border-t border-neutral-800 flex justify-end">
+            <div className="pt-6 border-t border-neutral-800 flex justify-end min-w-0">
               <button
                 type="submit"
                 disabled={aboutSaving}
-                className="inline-flex items-center gap-2 px-6 py-3 rounded-2xl bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold text-sm transition shadow-lg shadow-amber-500/20 disabled:opacity-50"
+                className="inline-flex items-center justify-center gap-2 px-5 sm:px-6 py-2.5 sm:py-3 rounded-2xl bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold text-xs sm:text-sm transition shadow-lg shadow-amber-500/20 disabled:opacity-50 max-w-full"
               >
                 {aboutSaving ? (
                   <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <Loader2 className="w-4 h-4 animate-spin shrink-0" />
                     <span>Saving to Database & Cloudinary...</span>
                   </>
                 ) : (
                   <>
-                    <Save className="w-4 h-4" />
+                    <Save className="w-4 h-4 shrink-0" />
                     <span>Save About Page Changes</span>
                   </>
                 )}
@@ -756,41 +757,41 @@ export function AboutAdminManager({ initialAbout, initialGallery }: AboutAdminMa
         </form>
 
         {/* SECTION 3: GALLERY MANAGER */}
-        <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-6 sm:p-8 space-y-8 shadow-xl">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-neutral-800">
-            <div>
-              <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                <Film className="w-5 h-5 text-amber-500" />
-                <span>Gallery Manager (Direct Cloudinary Upload)</span>
+        <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-4 sm:p-6 lg:p-8 space-y-6 sm:space-y-8 shadow-xl w-full min-w-0">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-neutral-800 min-w-0">
+            <div className="min-w-0">
+              <h2 className="text-lg sm:text-xl font-bold text-white flex items-center gap-2">
+                <Film className="w-5 h-5 text-amber-500 shrink-0" />
+                <span className="truncate">Gallery Manager (Direct Cloudinary Upload)</span>
               </h2>
-              <p className="text-xs text-neutral-400 mt-0.5">
+              <p className="text-xs text-neutral-400 mt-0.5 break-words">
                 Upload image (≤ 10MB) or video (≤ 100MB, duration ≤ 10s). Saved directly to Cloudinary{' '}
-                <code className="text-amber-400">dawood-ox/gallery</code>.
+                <code className="text-amber-400 break-all">dawood-ox/gallery</code>.
               </p>
             </div>
-            <div className="text-xs text-neutral-400 bg-neutral-950 px-3 py-1.5 rounded-xl border border-neutral-800 inline-flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-emerald-500" />
+            <div className="text-xs text-neutral-400 bg-neutral-950 px-3 py-1.5 rounded-xl border border-neutral-800 inline-flex items-center gap-2 shrink-0 self-start sm:self-auto">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
               <span>{galleryItems.length} Items Live</span>
             </div>
           </div>
 
           {/* Add Media Upload Form */}
-          <form onSubmit={handleUploadGalleryItem} className="bg-neutral-950 p-6 rounded-2xl border border-neutral-800 space-y-6">
+          <form onSubmit={handleUploadGalleryItem} className="bg-neutral-950 p-4 sm:p-6 rounded-2xl border border-neutral-800 space-y-6 min-w-0">
             <h3 className="text-sm font-bold uppercase tracking-wider text-amber-500 flex items-center gap-2">
-              <Plus className="w-4 h-4" />
+              <Plus className="w-4 h-4 shrink-0" />
               <span>Add New Showcase Media</span>
             </h3>
 
             {galleryError && (
-              <div className="p-3 bg-red-950/50 border border-red-800 rounded-xl text-red-300 text-xs flex items-center gap-2">
+              <div className="p-3 bg-red-950/50 border border-red-800 rounded-xl text-red-300 text-xs flex items-center gap-2 min-w-0">
                 <AlertCircle className="w-4 h-4 flex-shrink-0 text-red-400" />
-                <span>{galleryError}</span>
+                <span className="break-words">{galleryError}</span>
               </div>
             )}
 
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start min-w-0">
               {/* Media File Input & Preview */}
-              <div className="lg:col-span-5 space-y-3">
+              <div className="lg:col-span-5 space-y-3 min-w-0">
                 <label className="block text-xs font-semibold text-neutral-300">
                   Select Media (Image ≤ 10MB or Video ≤ 100MB, ≤ 10s)
                 </label>
@@ -799,7 +800,7 @@ export function AboutAdminManager({ initialAbout, initialGallery }: AboutAdminMa
                   type="file"
                   accept="image/*,video/*"
                   onChange={handleGalleryFileSelect}
-                  className="w-full text-xs text-neutral-400 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-neutral-800 file:text-amber-400 hover:file:bg-neutral-700 cursor-pointer"
+                  className="w-full text-xs text-neutral-400 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-neutral-800 file:text-amber-400 hover:file:bg-neutral-700 cursor-pointer max-w-full overflow-hidden"
                 />
 
                 {galleryPreview && (
@@ -827,7 +828,7 @@ export function AboutAdminManager({ initialAbout, initialGallery }: AboutAdminMa
               </div>
 
               {/* Title & Description */}
-              <div className="lg:col-span-7 space-y-4">
+              <div className="lg:col-span-7 space-y-4 min-w-0">
                 <div>
                   <label className="block text-xs font-semibold text-neutral-300 mb-1">
                     Media Title (Optional)
@@ -862,12 +863,12 @@ export function AboutAdminManager({ initialAbout, initialGallery }: AboutAdminMa
                   >
                     {galleryUploading ? (
                       <>
-                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <Loader2 className="w-4 h-4 animate-spin shrink-0" />
                         <span>Streaming to Cloudinary...</span>
                       </>
                     ) : (
                       <>
-                        <Upload className="w-4 h-4" />
+                        <Upload className="w-4 h-4 shrink-0" />
                         <span>Upload to Gallery</span>
                       </>
                     )}
@@ -878,16 +879,16 @@ export function AboutAdminManager({ initialAbout, initialGallery }: AboutAdminMa
           </form>
 
           {/* Current Gallery Items Grid */}
-          <div className="space-y-4">
+          <div className="space-y-4 min-w-0">
             <h3 className="text-sm font-bold uppercase tracking-wider text-neutral-300">
               Live Gallery Items ({galleryItems.length})
             </h3>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 sm:gap-5 min-w-0">
               {galleryItems.map((item) => (
                 <div
                   key={String(item._id)}
-                  className="bg-neutral-950 border border-neutral-800 rounded-2xl overflow-hidden flex flex-col justify-between shadow-md group"
+                  className="bg-neutral-950 border border-neutral-800 rounded-2xl overflow-hidden flex flex-col justify-between shadow-md group min-w-0"
                 >
                   <div className="relative aspect-[4/3] bg-neutral-900 overflow-hidden">
                     {item.type === 'video' ? (
@@ -906,36 +907,36 @@ export function AboutAdminManager({ initialAbout, initialGallery }: AboutAdminMa
                       />
                     )}
                     <span className="absolute top-2 left-2 bg-neutral-950/80 backdrop-blur px-2 py-0.5 rounded text-[10px] font-bold uppercase text-amber-400 flex items-center gap-1">
-                      {item.type === 'video' ? <Film className="w-3 h-3" /> : <ImageIcon className="w-3 h-3" />}
+                      {item.type === 'video' ? <Film className="w-3 h-3 shrink-0" /> : <ImageIcon className="w-3 h-3 shrink-0" />}
                       <span>{item.type}</span>
                     </span>
                   </div>
 
-                  <div className="p-4 space-y-2 flex-1 flex flex-col justify-between">
+                  <div className="p-4 space-y-2 flex-1 flex flex-col justify-between min-w-0">
                     <div>
-                      <h4 className="text-sm font-bold text-white line-clamp-1">
+                      <h4 className="text-sm font-bold text-white line-clamp-1 break-words">
                         {item.title || 'Untitled Showcase Item'}
                       </h4>
                       {item.description && (
-                        <p className="text-xs text-neutral-400 mt-1 line-clamp-2">
+                        <p className="text-xs text-neutral-400 mt-1 line-clamp-2 break-words">
                           {item.description}
                         </p>
                       )}
                     </div>
 
-                    <div className="pt-3 border-t border-neutral-800 flex items-center justify-between">
-                      <span className="text-[10px] text-neutral-500">
+                    <div className="pt-3 border-t border-neutral-800 flex items-center justify-between gap-2 min-w-0">
+                      <span className="text-[10px] text-neutral-500 truncate">
                         {item.createdAt ? new Date(item.createdAt).toLocaleDateString() : 'Active'}
                       </span>
                       <button
                         onClick={() => handleDeleteGalleryItem(String(item._id))}
                         disabled={deletingId === String(item._id)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-red-950/40 hover:bg-red-900/60 text-red-400 border border-red-900/50 text-xs font-semibold transition disabled:opacity-50"
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-red-950/40 hover:bg-red-900/60 text-red-400 border border-red-900/50 text-xs font-semibold transition disabled:opacity-50 shrink-0"
                       >
                         {deletingId === String(item._id) ? (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
                         ) : (
-                          <Trash2 className="w-3.5 h-3.5" />
+                          <Trash2 className="w-3.5 h-3.5 shrink-0" />
                         )}
                         <span>Delete</span>
                       </button>
@@ -956,3 +957,4 @@ export function AboutAdminManager({ initialAbout, initialGallery }: AboutAdminMa
     </div>
   );
 }
+

@@ -12,13 +12,13 @@ import { Category } from '@/models/Category';
 import { paginateQuery } from '@/lib/db/pagination';
 import { successResponse, errorResponse, type ActionResult } from '@/lib/response';
 import { handleActionError } from '@/lib/error-handler';
-import { ProductCategory, ProductSubCategory, type IProduct, type ProductFilters } from '@/types';
+import { ProductCategory, ProductSubCategory, Department, type IProduct, type ProductFilters } from '@/types';
 import { MockDb } from '@/lib/db/mock-store';
 import { revalidatePath } from 'next/cache';
 import type { Filter } from 'mongodb';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { isElevatedAdminRole } from '@/lib/auth-guard';
+import { verifyDepartmentAuth } from '@/lib/auth-guard';
 
 export async function getProducts(filters: ProductFilters = {}): Promise<
   ActionResult<{
@@ -206,27 +206,17 @@ export async function searchProducts(queryStr: string): Promise<
   }
 }
 
-/**
- * Private helper to verify that the caller has elevated administrative clearance (SUPER_ADMIN or ADMIN).
- * Obtains session exclusively from getServerSession(authOptions).
- * MANAGER, RIDER, CUSTOMER, and unauthenticated callers are strictly denied.
- */
-async function verifyProductAdminAuth(): Promise<boolean> {
-  try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user || !isElevatedAdminRole((session.user as { role?: string }).role)) {
-      return false;
-    }
-    return true;
-  } catch {
-    return false;
-  }
-}
+
 
 export async function getAllAdminProducts(search?: string): Promise<ActionResult<IProduct[]>> {
   try {
-    if (!(await verifyProductAdminAuth())) {
-      return errorResponse('Unauthorized: Administrative clearance required.');
+    const auth = await verifyDepartmentAuth({
+      requiredDepartment: Department.INVENTORY,
+      requiredPermission: 'products:read',
+    });
+
+    if (!auth.authorized) {
+      return errorResponse(auth.error || 'Unauthorized: Inventory clearance required.');
     }
 
     await connectToDatabase();
@@ -245,8 +235,12 @@ export async function getAllAdminProducts(search?: string): Promise<ActionResult
     const products = await Product.find(query).sort({ createdAt: -1 }).limit(100).lean();
     return successResponse(JSON.parse(JSON.stringify(products)));
   } catch (error: unknown) {
-    if (!(await verifyProductAdminAuth())) {
-      return errorResponse('Unauthorized: Administrative clearance required.');
+    const auth = await verifyDepartmentAuth({
+      requiredDepartment: Department.INVENTORY,
+      requiredPermission: 'products:read',
+    });
+    if (!auth.authorized) {
+      return errorResponse(auth.error || 'Unauthorized: Inventory clearance required.');
     }
     const res = MockDb.getProducts({ limit: 100, search });
     return successResponse(res.products);
@@ -255,8 +249,13 @@ export async function getAllAdminProducts(search?: string): Promise<ActionResult
 
 export async function createProduct(payload: Partial<IProduct>): Promise<ActionResult<IProduct>> {
   try {
-    if (!(await verifyProductAdminAuth())) {
-      return errorResponse('Unauthorized: Administrative clearance required to create products.');
+    const auth = await verifyDepartmentAuth({
+      requiredDepartment: Department.INVENTORY,
+      requiredPermission: 'products:write',
+    });
+
+    if (!auth.authorized) {
+      return errorResponse(auth.error || 'Unauthorized: Inventory write clearance required.');
     }
 
     await connectToDatabase();
@@ -325,8 +324,12 @@ export async function createProduct(payload: Partial<IProduct>): Promise<ActionR
 
     return successResponse(plainDoc);
   } catch (error: unknown) {
-    if (!(await verifyProductAdminAuth())) {
-      return errorResponse('Unauthorized: Administrative clearance required to create products.');
+    const auth = await verifyDepartmentAuth({
+      requiredDepartment: Department.INVENTORY,
+      requiredPermission: 'products:write',
+    });
+    if (!auth.authorized) {
+      return errorResponse(auth.error || 'Unauthorized: Inventory write clearance required.');
     }
     const fallbackProd = MockDb.addProduct(payload);
     if (fallbackProd) {
@@ -344,8 +347,13 @@ export async function updateProduct(
   updates: Partial<IProduct>
 ): Promise<ActionResult<IProduct>> {
   try {
-    if (!(await verifyProductAdminAuth())) {
-      return errorResponse('Unauthorized: Administrative clearance required to update products.');
+    const auth = await verifyDepartmentAuth({
+      requiredDepartment: Department.INVENTORY,
+      requiredPermission: 'products:write',
+    });
+
+    if (!auth.authorized) {
+      return errorResponse(auth.error || 'Unauthorized: Inventory write clearance required.');
     }
 
     await connectToDatabase();
@@ -396,8 +404,12 @@ export async function updateProduct(
 
     return successResponse(JSON.parse(JSON.stringify(doc)));
   } catch (error: unknown) {
-    if (!(await verifyProductAdminAuth())) {
-      return errorResponse('Unauthorized: Administrative clearance required to update products.');
+    const auth = await verifyDepartmentAuth({
+      requiredDepartment: Department.INVENTORY,
+      requiredPermission: 'products:write',
+    });
+    if (!auth.authorized) {
+      return errorResponse(auth.error || 'Unauthorized: Inventory write clearance required.');
     }
     const updated = MockDb.updateProduct(productId, updates);
     if (updated) {
@@ -421,8 +433,13 @@ export async function updateVariantStock(
   color?: string
 ): Promise<ActionResult<IProduct>> {
   try {
-    if (!(await verifyProductAdminAuth())) {
-      return errorResponse('Unauthorized: Administrative clearance required to adjust variant inventory.');
+    const auth = await verifyDepartmentAuth({
+      requiredDepartment: Department.INVENTORY,
+      requiredPermission: 'stock:update',
+    });
+
+    if (!auth.authorized) {
+      return errorResponse(auth.error || 'Unauthorized: Inventory stock update clearance required.');
     }
 
     if (typeof newStock !== 'number' || newStock < 0 || !Number.isInteger(newStock)) {
@@ -473,8 +490,13 @@ export async function updateVariantStock(
 
 export async function deleteProduct(productId: string): Promise<ActionResult<{ deleted: boolean }>> {
   try {
-    if (!(await verifyProductAdminAuth())) {
-      return errorResponse('Unauthorized: Administrative clearance required to delete products.');
+    const auth = await verifyDepartmentAuth({
+      requiredDepartment: Department.INVENTORY,
+      requiredPermission: 'products:delete',
+    });
+
+    if (!auth.authorized) {
+      return errorResponse(auth.error || 'Unauthorized: Inventory delete clearance required.');
     }
 
     await connectToDatabase();
@@ -496,8 +518,12 @@ export async function deleteProduct(productId: string): Promise<ActionResult<{ d
 
     return successResponse({ deleted: true });
   } catch (error: unknown) {
-    if (!(await verifyProductAdminAuth())) {
-      return errorResponse('Unauthorized: Administrative clearance required to delete products.');
+    const auth = await verifyDepartmentAuth({
+      requiredDepartment: Department.INVENTORY,
+      requiredPermission: 'products:delete',
+    });
+    if (!auth.authorized) {
+      return errorResponse(auth.error || 'Unauthorized: Inventory delete clearance required.');
     }
     const ok = MockDb.deleteProduct(productId);
     if (ok) {

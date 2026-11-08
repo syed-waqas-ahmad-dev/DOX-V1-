@@ -11,12 +11,12 @@ import { ReturnRequest } from '@/models/ReturnRequest';
 import { Order } from '@/models/Order';
 import { successResponse, errorResponse, type ActionResult } from '@/lib/response';
 import { handleActionError } from '@/lib/error-handler';
-import { ReturnReason, ReturnStatus, PaymentMethod, type IReturnRequest, type CreateReturnInput } from '@/types';
+import { ReturnReason, ReturnStatus, PaymentMethod, Department, type IReturnRequest, type CreateReturnInput } from '@/types';
 import { Types } from 'mongoose';
 
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { isElevatedAdminRole, isAdminRole } from '@/lib/auth-guard';
+import { isElevatedAdminRole, verifyDepartmentAuth } from '@/lib/auth-guard';
 import { UserRole } from '@/types';
 
 // In-memory returns store for offline / mock mode
@@ -139,36 +139,35 @@ export async function createReturnRequest(
 
 export async function getUserReturns(): Promise<ActionResult<IReturnRequest[]>> {
   try {
-    let session = null;
-    try {
-      session = await getServerSession(authOptions);
-    } catch {
-      session = null;
-    }
+    const auth = await verifyDepartmentAuth({
+      requiredDepartment: Department.RETURNS,
+      requiredPermission: 'returns:read',
+    });
 
-    if (!session?.user) {
-      return errorResponse('Unauthenticated: Please sign in to view return requests.');
-    }
-
-    const sessionUser = session.user as { id: string; role: string };
-    const isAdmin = isAdminRole(sessionUser.role as any);
-
-    await connectToDatabase();
-
-    if (!isDatabaseConnected()) {
-      if (isAdmin) {
+    // Path A: Authorized Admin or Returns Manager (Full View)
+    if (auth.authorized) {
+      await connectToDatabase();
+      if (!isDatabaseConnected()) {
         return successResponse(mockReturns);
       }
-      return successResponse(mockReturns.filter(r => r.userId?.toString() === sessionUser.id));
+      const returns = await ReturnRequest.find({}).sort({ createdAt: -1 }).lean();
+      return successResponse(JSON.parse(JSON.stringify(returns)));
     }
 
-    const query: Record<string, unknown> = {};
-    if (!isAdmin) {
-      query.userId = new Types.ObjectId(sessionUser.id);
+    // Path B: Customer (Self View Only)
+    if (auth.role === UserRole.CUSTOMER && auth.userId) {
+      await connectToDatabase();
+      if (!isDatabaseConnected()) {
+        return successResponse(mockReturns.filter(r => r.userId?.toString() === auth.userId));
+      }
+      const returns = await ReturnRequest.find({ userId: new Types.ObjectId(auth.userId) })
+        .sort({ createdAt: -1 })
+        .lean();
+      return successResponse(JSON.parse(JSON.stringify(returns)));
     }
 
-    const returns = await ReturnRequest.find(query).sort({ createdAt: -1 }).lean();
-    return successResponse(JSON.parse(JSON.stringify(returns)));
+    // Path C: Deny (Unauthenticated, Other Departments, or Riders)
+    return errorResponse(auth.error || 'Unauthorized: You do not have permission to view return requests.');
   } catch (error: unknown) {
     return handleActionError(error);
   }

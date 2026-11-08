@@ -17,6 +17,8 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Logo } from '@/components/layout/Logo';
 import { createAdmin, deleteAdmin, type AdminUserItem } from './actions';
+import { UserRole, Department } from '@/types';
+import { ADMIN_PERMISSIONS, DEPARTMENT_PERMISSIONS, DEFAULT_MANAGER_PERMISSIONS } from '@/lib/admin/permissions';
 import {
   Users,
   ShieldCheck,
@@ -36,18 +38,9 @@ import {
   Trash2,
 } from 'lucide-react';
 
-const PERMISSION_OPTIONS = [
-  'products:read',
-  'products:write',
-  'products:delete',
-  'orders:read',
-  'orders:update_status',
-  'orders:assign_courier',
-  'marketing:manage',
-  'finance:view_reports',
-] as const;
+const GLOBAL_PERMISSIONS = ['marketing:manage', 'finance:view_reports'] as const;
 
-type PermissionOption = (typeof PERMISSION_OPTIONS)[number];
+type PermissionOption = typeof ADMIN_PERMISSIONS[number];
 
 interface ManageAdminsClientProps {
   initialAdmins: AdminUserItem[];
@@ -65,10 +58,16 @@ export function ManageAdminsClient({
   const [name, setName] = useState<string>('');
   const [email, setEmail] = useState<string>('');
   const [password, setPassword] = useState<string>('');
+  const [role, setRole] = useState<UserRole>(UserRole.ADMIN);
+  const [department, setDepartment] = useState<Department | null>(null);
   const [selectedPermissions, setSelectedPermissions] = useState<PermissionOption[]>([
     'products:read',
     'orders:read',
   ]);
+
+  const availablePermissions = role === UserRole.MANAGER && department 
+    ? DEPARTMENT_PERMISSIONS[department] || []
+    : ADMIN_PERMISSIONS;
 
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -86,10 +85,10 @@ export function ManageAdminsClient({
   };
 
   const handleSelectAllPermissions = () => {
-    if (selectedPermissions.length === PERMISSION_OPTIONS.length) {
+    if (selectedPermissions.length === availablePermissions.length) {
       setSelectedPermissions([]);
     } else {
-      setSelectedPermissions([...PERMISSION_OPTIONS]);
+      setSelectedPermissions([...availablePermissions] as PermissionOption[]);
     }
   };
 
@@ -97,6 +96,8 @@ export function ManageAdminsClient({
     setName('');
     setEmail('');
     setPassword('');
+    setRole(UserRole.ADMIN);
+    setDepartment(null);
     setSelectedPermissions(['products:read', 'orders:read']);
     setFormError(null);
     setIsModalOpen(true);
@@ -166,6 +167,8 @@ export function ManageAdminsClient({
         name: name.trim(),
         email: email.trim().toLowerCase(),
         password: password,
+        role: role,
+        department: department,
         permissions: [...selectedPermissions],
       });
 
@@ -295,7 +298,7 @@ export function ManageAdminsClient({
               </h2>
             </div>
             <span className="text-[11px] font-mono text-neutral-400 bg-neutral-950 px-3 py-1 rounded-full border border-neutral-800">
-              Roles: super_admin | admin
+              Roles: super_admin | admin | manager
             </span>
           </div>
 
@@ -350,6 +353,11 @@ export function ManageAdminsClient({
                               </div>
                               <div className="text-[10px] text-neutral-500 font-mono">
                                 ID: {admin._id.slice(-8)}
+                                {admin.department && (
+                                  <span className="ml-2 text-amber-500/70 uppercase">
+                                    • {admin.department}
+                                  </span>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -364,12 +372,14 @@ export function ManageAdminsClient({
                             className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider font-mono border ${
                               isSuper
                                 ? 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+                                : admin.role === 'manager'
+                                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
                                 : 'bg-blue-500/10 border-blue-500/30 text-blue-400'
                             }`}
                           >
                             <span
                               className={`h-1.5 w-1.5 rounded-full ${
-                                isSuper ? 'bg-amber-400 animate-pulse' : 'bg-blue-400'
+                                isSuper ? 'bg-amber-400 animate-pulse' : admin.role === 'manager' ? 'bg-emerald-400' : 'bg-blue-400'
                               }`}
                             />
                             {admin.role}
@@ -535,31 +545,90 @@ export function ManageAdminsClient({
                   </span>
                 </div>
 
+                {/* Field 3.5: Role & Department */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-neutral-300 flex items-center gap-1">
+                      <ShieldCheck className="h-3.5 w-3.5 text-neutral-400" />
+                      <span>System Role</span>
+                    </label>
+                    <select
+                      value={role}
+                      onChange={(e) => {
+                        const newRole = e.target.value as UserRole;
+                        setRole(newRole);
+                        if (newRole !== UserRole.MANAGER) {
+                          setDepartment(null);
+                          setSelectedPermissions(['products:read', 'orders:read']);
+                        } else {
+                          // Default to first department if manager selected
+                          const firstDept = Department.INVENTORY;
+                          setDepartment(firstDept);
+                          const defaults = DEFAULT_MANAGER_PERMISSIONS[firstDept] || [];
+                          setSelectedPermissions([...defaults] as PermissionOption[]);
+                        }
+                      }}
+                      disabled={submitting}
+                      className="w-full px-4 py-2.5 rounded-xl bg-neutral-950 border border-neutral-800 text-xs text-white focus:outline-none focus:border-amber-500 transition-colors appearance-none cursor-pointer"
+                    >
+                      <option value={UserRole.ADMIN}>Administrator</option>
+                      <option value={UserRole.MANAGER}>Department Manager</option>
+                    </select>
+                  </div>
+ 
+                  {role === UserRole.MANAGER && (
+                    <div className="space-y-1.5 animate-in slide-in-from-left-2 duration-200">
+                      <label className="text-xs font-bold text-neutral-300 flex items-center gap-1">
+                        <Users className="h-3.5 w-3.5 text-neutral-400" />
+                        <span>Department</span>
+                      </label>
+                      <select
+                        value={department || ''}
+                        onChange={(e) => {
+                          const dept = e.target.value as Department;
+                          setDepartment(dept);
+                          // Reset permissions to department defaults
+                          const defaults = DEFAULT_MANAGER_PERMISSIONS[dept] || [];
+                          setSelectedPermissions([...defaults] as PermissionOption[]);
+                        }}
+                        disabled={submitting}
+                        className="w-full px-4 py-2.5 rounded-xl bg-neutral-950 border border-neutral-800 text-xs text-white focus:outline-none focus:border-amber-500 transition-colors appearance-none cursor-pointer"
+                      >
+                        {Object.values(Department).map((dept) => (
+                          <option key={dept} value={dept}>
+                            {dept.charAt(0).toUpperCase() + dept.slice(1)}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+
                 {/* Field 4: Permissions Checkboxes */}
                 <div className="space-y-2 pt-2 border-t border-neutral-800">
                   <div className="flex items-center justify-between">
                     <label className="text-xs font-bold text-neutral-300 uppercase tracking-wider text-[11px]">
-                      Permissions ({selectedPermissions.length}/{PERMISSION_OPTIONS.length})
+                      Permissions ({selectedPermissions.length}/{availablePermissions.length})
                     </label>
                     <button
                       type="button"
                       onClick={handleSelectAllPermissions}
                       className="text-[10px] font-bold text-amber-400 hover:text-amber-300 transition-colors cursor-pointer"
                     >
-                      {selectedPermissions.length === PERMISSION_OPTIONS.length
+                      {selectedPermissions.length === availablePermissions.length
                         ? 'Deselect All'
-                        : 'Select All (8)'}
+                        : `Select All (${availablePermissions.length})`}
                     </button>
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto p-1 rounded-xl bg-neutral-950/70 border border-neutral-800">
-                    {PERMISSION_OPTIONS.map((perm) => {
-                      const isChecked = selectedPermissions.includes(perm);
+                    {availablePermissions.map((perm) => {
+                      const isChecked = selectedPermissions.includes(perm as PermissionOption);
                       return (
                         <button
                           key={perm}
                           type="button"
-                          onClick={() => handleTogglePermission(perm)}
+                          onClick={() => handleTogglePermission(perm as PermissionOption)}
                           disabled={submitting}
                           className={`p-2 rounded-lg border text-left text-xs transition-all flex items-center gap-2 cursor-pointer ${
                             isChecked

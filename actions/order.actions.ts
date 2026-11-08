@@ -21,16 +21,18 @@ import { checkoutOrderSchema, type CheckoutOrderInput } from '@/lib/validators';
 import { COD_MAX_LIMIT_WITHOUT_OTP } from '@/lib/constants';
 import { MockDb } from '@/lib/db/mock-store';
 import { Notification } from '@/models/Notification';
-import { OrderStatus, PaymentMethod, PaymentStatus, Courier, type IOrder, type IOrderItem, NotificationType, type CreateOrderPayload, UserRole } from '@/types';
+import { OrderStatus, PaymentMethod, PaymentStatus, Courier, type IOrder, type IOrderItem, NotificationType, type CreateOrderPayload, UserRole, Department } from '@/types';
 import { Types } from 'mongoose';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { isElevatedAdminRole, isAdminRole } from '@/lib/auth-guard';
+import { isElevatedAdminRole, isAdminRole, verifyDepartmentAuth } from '@/lib/auth-guard';
 import { cancelReferralInternal, completeReferralInternal } from '@/lib/services/referral.service';
 import { executeWithOptionalTransaction } from '@/lib/services/wallet.service';
 import { TrackingAttempt } from '@/models/TrackingAttempt';
 import { headers } from 'next/headers';
 import type { ITrackOrderDTO } from '@/types';
+import { generateVerificationToken, getInvoiceVerificationToken } from '@/lib/invoice';
+import { rateLimit } from '@/lib/rate-limit';
 
 export async function createOrder(payload: CreateOrderPayload): Promise<ActionResult<{ order: IOrder; requiresOtp: boolean }>> {
   try {
@@ -116,6 +118,7 @@ export async function createOrder(payload: CreateOrderPayload): Promise<ActionRe
         courier,
         trackingNumber,
         notes: validatedData.notes,
+        verificationToken: generateVerificationToken(),
       });
 
       return successResponse({
@@ -368,6 +371,7 @@ export async function createOrder(payload: CreateOrderPayload): Promise<ActionRe
             courier,
             trackingNumber,
             notes: validatedData.notes,
+            verificationToken: generateVerificationToken(),
           },
         ],
         { session: dbSession || undefined }
@@ -480,19 +484,22 @@ export async function createOrder(payload: CreateOrderPayload): Promise<ActionRe
 
 export async function getOrderById(orderId: string): Promise<ActionResult<IOrder>> {
   try {
-    let session = null;
-    try {
-      session = await getServerSession(authOptions);
-    } catch {
-      session = null;
-    }
+    const auth = await verifyDepartmentAuth({
+      requiredDepartment: Department.ORDERS,
+      requiredPermission: 'orders:read',
+    });
 
-    if (!session?.user) {
-      return errorResponse('Unauthenticated: Please sign in to view order details.');
+    // If not authorized as admin/manager, we must verify customer ownership
+    let sessionUser: { id: string; role: string; email?: string } | null = null;
+    if (auth.authorized) {
+      sessionUser = { id: auth.userId || '', role: auth.role || UserRole.CUSTOMER };
+    } else {
+      const session = await getServerSession(authOptions);
+      if (!session?.user) {
+        return errorResponse(auth.error || 'Unauthenticated: Please sign in to view order details.');
+      }
+      sessionUser = session.user as { id: string; role: string; email?: string };
     }
-
-    const sessionUser = session.user as { id: string; role: string; email?: string };
-    const isElevatedAdmin = isElevatedAdminRole(sessionUser.role);
 
     await connectToDatabase();
 
@@ -500,7 +507,8 @@ export async function getOrderById(orderId: string): Promise<ActionResult<IOrder
       const mockOrder = MockDb.getOrderById(orderId);
       if (mockOrder) {
         const orderOwnerId = mockOrder.userId?.toString();
-        if (!isElevatedAdmin && orderOwnerId !== sessionUser.id) {
+        // If not authorized as admin, must be the owner
+        if (!auth.authorized && orderOwnerId !== sessionUser.id) {
           return errorResponse("Unauthorized: Cannot access another customer's order.");
         }
         return successResponse(mockOrder);
@@ -514,12 +522,13 @@ export async function getOrderById(orderId: string): Promise<ActionResult<IOrder
     }
 
     // Verify ownership or administrative clearance
-    if (!isElevatedAdmin && order.userId?.toString() !== sessionUser.id) {
+    if (!auth.authorized && order.userId?.toString() !== sessionUser.id) {
       // Allow guest orders if email matches AND user has verified their email identity
-      const sessionEmail = sessionUser.email?.toLowerCase().trim();
+      const session = await getServerSession(authOptions);
+      const sessionEmail = session?.user?.email?.toLowerCase().trim();
       const orderGuestEmail = order.guestEmail?.toLowerCase().trim();
       
-      if (orderGuestEmail && orderGuestEmail === sessionEmail && (sessionUser as any).isEmailVerified) {
+      if (orderGuestEmail && orderGuestEmail === sessionEmail && (session?.user as any)?.isEmailVerified) {
         return successResponse(JSON.parse(JSON.stringify(order)));
       }
       return errorResponse("Unauthorized: Cannot access another customer's order.");
@@ -678,15 +687,13 @@ export async function getAllOrders(filters?: {
   archived?: boolean;
 }): Promise<ActionResult<IOrder[]>> {
   try {
-    let session = null;
-    try {
-      session = await getServerSession(authOptions);
-    } catch {
-      session = null;
-    }
+    const auth = await verifyDepartmentAuth({
+      requiredDepartment: Department.ORDERS,
+      requiredPermission: 'orders:read',
+    });
 
-    if (!session?.user || !isAdminRole((session.user as { role: UserRole }).role)) {
-      return errorResponse('Unauthorized: Administrative clearance required.');
+    if (!auth.authorized) {
+      return errorResponse(auth.error || 'Unauthorized: Orders clearance required.');
     }
 
     await connectToDatabase();
@@ -726,21 +733,22 @@ export async function getAllOrders(filters?: {
       .lean();
     return successResponse(JSON.parse(JSON.stringify(orders)));
   } catch (error: unknown) {
+    const auth = await verifyDepartmentAuth({
+      requiredDepartment: Department.ORDERS,
+      requiredPermission: 'orders:read',
+    });
+    if (!auth.authorized) {
+      return errorResponse(auth.error || 'Unauthorized: Orders clearance required.');
+    }
     return successResponse(MockDb.getAllOrders(filters));
   }
 }
 
 export async function archiveOrder(orderId: string): Promise<ActionResult<IOrder>> {
   try {
-    let session = null;
-    try {
-      session = await getServerSession(authOptions);
-    } catch {
-      session = null;
-    }
-
-    if (!session?.user || !isElevatedAdminRole((session.user as { role: UserRole }).role)) {
-      return errorResponse('Unauthorized: Administrative clearance required to archive orders.');
+    const auth = await verifyDepartmentAuth();
+    if (!auth.authorized || !isElevatedAdminRole(auth.role)) {
+      return errorResponse(auth.error || 'Unauthorized: Administrative clearance required to archive orders.');
     }
 
     await connectToDatabase();
@@ -765,21 +773,21 @@ export async function archiveOrder(orderId: string): Promise<ActionResult<IOrder
 
     return successResponse(JSON.parse(JSON.stringify(order)), 'Order archived successfully.');
   } catch (error: unknown) {
+    const auth = await verifyDepartmentAuth();
+    if (!auth.authorized || !isElevatedAdminRole(auth.role)) {
+      return errorResponse(auth.error || 'Unauthorized: Administrative clearance required to archive orders.');
+    }
+    const mockUpdated = MockDb.archiveOrder(orderId);
+    if (mockUpdated) return successResponse(mockUpdated, 'Order archived successfully.');
     return handleActionError(error);
   }
 }
 
 export async function unarchiveOrder(orderId: string): Promise<ActionResult<IOrder>> {
   try {
-    let session = null;
-    try {
-      session = await getServerSession(authOptions);
-    } catch {
-      session = null;
-    }
-
-    if (!session?.user || !isElevatedAdminRole((session.user as { role: UserRole }).role)) {
-      return errorResponse('Unauthorized: Administrative clearance required to restore orders.');
+    const auth = await verifyDepartmentAuth();
+    if (!auth.authorized || !isElevatedAdminRole(auth.role)) {
+      return errorResponse(auth.error || 'Unauthorized: Administrative clearance required to restore orders.');
     }
 
     await connectToDatabase();
@@ -804,6 +812,12 @@ export async function unarchiveOrder(orderId: string): Promise<ActionResult<IOrd
 
     return successResponse(JSON.parse(JSON.stringify(order)), 'Order restored / unarchived successfully.');
   } catch (error: unknown) {
+    const auth = await verifyDepartmentAuth();
+    if (!auth.authorized || !isElevatedAdminRole(auth.role)) {
+      return errorResponse(auth.error || 'Unauthorized: Administrative clearance required to restore orders.');
+    }
+    const mockUpdated = MockDb.unarchiveOrder(orderId);
+    if (mockUpdated) return successResponse(mockUpdated, 'Order restored / unarchived successfully.');
     return handleActionError(error);
   }
 }
@@ -818,15 +832,13 @@ export async function updateOrderStatus(
   }
 ): Promise<ActionResult<IOrder>> {
   try {
-    let session = null;
-    try {
-      session = await getServerSession(authOptions);
-    } catch {
-      session = null;
-    }
+    const auth = await verifyDepartmentAuth({
+      requiredDepartment: Department.ORDERS,
+      requiredPermission: 'orders:update_status',
+    });
 
-    if (!session?.user || !isAdminRole((session.user as { role: UserRole }).role)) {
-      return errorResponse('Unauthorized: Administrative clearance required to update order status.');
+    if (!auth.authorized) {
+      return errorResponse(auth.error || 'Unauthorized: Orders update clearance required.');
     }
 
     await connectToDatabase();
@@ -933,8 +945,8 @@ export async function updateOrderStatus(
           { session: dbSession || undefined, new: true }
         ).lean();
 
-        // Phase 4: Cancel referral with session propagation
-        await cancelReferralInternal(orderId, dbSession || undefined);
+        // Phase 4: Cancel referral with session propagation & actor attribution
+        await cancelReferralInternal(orderId, dbSession || undefined, auth.userId || undefined);
       }
 
       const updated =
@@ -999,8 +1011,92 @@ export async function updateOrderStatus(
       return successResponse(JSON.parse(JSON.stringify(updated)));
     });
   } catch (error: unknown) {
+    const auth = await verifyDepartmentAuth({
+      requiredDepartment: Department.ORDERS,
+      requiredPermission: 'orders:update_status',
+    });
+    if (!auth.authorized) {
+      return errorResponse(auth.error || 'Unauthorized: Orders update clearance required.');
+    }
     const mockUpdated = MockDb.updateOrderStatus(orderId, updates);
     if (mockUpdated) return successResponse(mockUpdated);
     return handleActionError(error);
   }
 }
+
+export interface PublicInvoiceVerificationDTO {
+  verified: boolean;
+  sellerName: string;
+  sellerLocation: string;
+  maskedInvoiceRef: string;
+  verificationTimestamp: string;
+}
+
+export async function verifyInvoiceToken(
+  token: string
+): Promise<ActionResult<PublicInvoiceVerificationDTO>> {
+  try {
+    const cleanToken = token?.trim().toLowerCase();
+
+    // 1. Format validation: must be a 64-character hex string
+    if (!cleanToken || !/^[a-f0-9]{64}$/i.test(cleanToken)) {
+      return errorResponse('Invalid or malformed verification token.');
+    }
+
+    // 2. Rate limiting check with sanitized client IP extraction
+    let ip = '127.0.0.1';
+    try {
+      const headerList = await headers();
+      const forwarded = headerList.get('x-forwarded-for');
+      const realIp = headerList.get('x-real-ip') || headerList.get('cf-connecting-ip');
+      if (forwarded) {
+        ip = forwarded.split(',')[0].trim();
+      } else if (realIp) {
+        ip = realIp.trim();
+      }
+    } catch {
+      // In CLI test execution outside HTTP request context, default to 127.0.0.1
+    }
+    // Sanitize IP key to prevent key injection attacks
+    const safeIpKey = ip.replace(/[^a-zA-Z0-9_.:-]/g, '_');
+    const rateLimitResult = await rateLimit(`verify_inv_${safeIpKey}`, 20, 60000);
+    if (!rateLimitResult.success) {
+      return errorResponse('Too many verification attempts. Please try again in a minute.');
+    }
+
+    await connectToDatabase();
+
+    let foundOrder: any = null;
+
+    if (isDatabaseConnected()) {
+      // Direct indexed lookup by persisted verificationToken ONLY (O(1) query)
+      foundOrder = await Order.findOne({ verificationToken: cleanToken }).select('orderNumber').lean();
+    } else {
+      // MockDb fallback
+      const mockOrders = MockDb.getAllOrders();
+      foundOrder = mockOrders.find((o: any) => o.verificationToken === cleanToken);
+    }
+
+    if (!foundOrder) {
+      return errorResponse('Invoice verification failed. Unrecognized or invalid token.');
+    }
+
+    // Construct minimal non-PII public verification response
+    const orderNumClean = foundOrder.orderNumber
+      ? foundOrder.orderNumber.replace('OX-', '')
+      : 'ORDER';
+    const lastFour = orderNumClean.slice(-4);
+    const maskedInvoiceRef = `INV-****-${lastFour}`;
+
+    return successResponse({
+      verified: true,
+      sellerName: 'Bajaur OX Shoes',
+      sellerLocation: 'Inayat Killi Bazar, Bypass Road, District Bajaur, Pakistan',
+      maskedInvoiceRef,
+      verificationTimestamp: new Date().toISOString(),
+    });
+  } catch (error: unknown) {
+    return handleActionError(error);
+  }
+}
+

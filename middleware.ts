@@ -14,45 +14,50 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
-  const secret = process.env.NEXTAUTH_SECRET || "ox-shoes-super-secret-key-2026";
+  const secret = process.env.NEXTAUTH_SECRET?.trim();
   const isHttps = req.nextUrl.protocol === "https:" || req.headers.get("x-forwarded-proto") === "https";
 
-  // Check with detected protocol first (supporting Cloud Run HTTPS proxy)
-  let token = await getToken({
-    req,
-    secret,
-    secureCookie: isHttps,
-  });
+  let token: any = null;
 
-  // If null on reverse-proxy HTTPS, fallback to checking opposite secureCookie flag
-  if (!token) {
+  // Only attempt cryptographic JWT verification if secret is configured
+  if (secret) {
+    // Check with detected protocol first (supporting Cloud Run HTTPS proxy)
     token = await getToken({
       req,
       secret,
-      secureCookie: !isHttps,
+      secureCookie: isHttps,
     });
-  }
 
-  // Explicit fallback checking cookie names directly
-  if (!token) {
-    const rawSecureCookie = req.cookies.get("__Secure-next-auth.session-token")?.value;
-    if (rawSecureCookie) {
+    // If null on reverse-proxy HTTPS, fallback to checking opposite secureCookie flag
+    if (!token) {
       token = await getToken({
         req,
         secret,
-        cookieName: "__Secure-next-auth.session-token",
+        secureCookie: !isHttps,
       });
     }
-  }
 
-  if (!token) {
-    const rawNonSecureCookie = req.cookies.get("next-auth.session-token")?.value;
-    if (rawNonSecureCookie) {
-      token = await getToken({
-        req,
-        secret,
-        cookieName: "next-auth.session-token",
-      });
+    // Explicit fallback checking cookie names directly
+    if (!token) {
+      const rawSecureCookie = req.cookies.get("__Secure-next-auth.session-token")?.value;
+      if (rawSecureCookie) {
+        token = await getToken({
+          req,
+          secret,
+          cookieName: "__Secure-next-auth.session-token",
+        });
+      }
+    }
+
+    if (!token) {
+      const rawNonSecureCookie = req.cookies.get("next-auth.session-token")?.value;
+      if (rawNonSecureCookie) {
+        token = await getToken({
+          req,
+          secret,
+          cookieName: "next-auth.session-token",
+        });
+      }
     }
   }
 
@@ -61,25 +66,30 @@ export async function middleware(req: NextRequest) {
   // 1. Admin Panel Protection
   if (path.startsWith("/admin")) {
     if (!token) return NextResponse.redirect(new URL("/login", req.url));
-    if (role !== "super_admin" && role !== "admin") {
+    if (role !== "super_admin" && role !== "admin" && role !== "manager") {
       return NextResponse.redirect(new URL("/my-account", req.url));
+    }
+    // Defense-in-depth: coarse protection for super-admin-only routes
+    if (path.startsWith("/admin/manage-admins") || path.startsWith("/admin/about")) {
+      if (role !== "super_admin") {
+        return NextResponse.redirect(new URL("/admin?error=unauthorized", req.url));
+      }
+    }
+    // Defense-in-depth: coarse protection for elevated-admin-only customer & notification routes
+    if (path.startsWith("/admin/customers") || path.startsWith("/admin/notifications")) {
+      if (role !== "super_admin" && role !== "admin") {
+        return NextResponse.redirect(new URL("/admin?error=unauthorized", req.url));
+      }
     }
   }
 
-  // 2. Rider Delivery Panel Protection
+  // 2. Rider Delivery Panel Access
+  // The /delivery route hosts both the Rider Sign-In form (unauthenticated/customer)
+  // and the Rider Terminal dashboard (authenticated rider).
+  // All sensitive delivery actions independently enforce fail-closed authorization.
+  // Customers and unauthenticated visitors are permitted to view the sign-in form.
   if (path.startsWith("/delivery")) {
-    const hasRiderCookie = Boolean(req.cookies.get("ox_rider_session")?.value);
-    if (hasRiderCookie) {
-      return NextResponse.next();
-    }
-    // Allow unauthenticated visitors to view the rider terminal login page
-    if (!token) {
-      return NextResponse.next();
-    }
-    // Block customers and managers from accessing rider terminal
-    if (role !== "rider" && role !== "super_admin" && role !== "admin") {
-      return NextResponse.redirect(new URL("/my-account", req.url));
-    }
+    return NextResponse.next();
   }
 
   // 3. Customer Profile Protection

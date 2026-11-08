@@ -8,7 +8,7 @@
 
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { isElevatedAdminRole } from '@/lib/auth-guard';
+import { isElevatedAdminRole, verifyDepartmentAuth } from '@/lib/auth-guard';
 import { connectToDatabase, isDatabaseConnected } from '@/lib/db/connect';
 import { Coupon } from '@/models/Coupon';
 import { validateCouponRules } from '@/lib/coupon-validator';
@@ -18,13 +18,10 @@ import { MockDb } from '@/lib/db/mock-store';
 import { CouponType, type ICoupon } from '@/types';
 import { revalidatePath } from 'next/cache';
 
-// Helper for coupon management auth
+// Helper for coupon management auth with live DB check
 async function checkCouponAdminAuth() {
-  const session = await getServerSession(authOptions);
-  if (!session?.user || !isElevatedAdminRole(session.user.role)) {
-    return false;
-  }
-  return true;
+  const auth = await verifyDepartmentAuth({ allowElevatedAdmin: true });
+  return auth.authorized;
 }
 
 export async function validateCouponAction(

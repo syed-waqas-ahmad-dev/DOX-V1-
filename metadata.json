@@ -1,6 +1,6 @@
 {
-  "name": "OX Shoes - Database & Architecture Suite",
-  "description": "Enterprise-grade MongoDB Atlas & Mongoose architecture for OX Shoes Pakistan with strict TypeScript schemas, seeders, compound indexes, and live management console.",
+  "name": "Bajaur OX Shoes",
+  "description": "Shop authentic Pakistani handmade Peshawari Chappals, Khussas, formal shoes, and sneakers crafted from 100% full-grain leather by Bajaur OX Shoes with Cash on Delivery nationwide.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

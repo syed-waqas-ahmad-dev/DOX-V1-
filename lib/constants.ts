@@ -4,12 +4,31 @@
  * Strict TypeScript: ZERO `any`.
  */
 
-export const APP_NAME = 'OX Shoes';
-export const APP_DESCRIPTION = 'Enterprise Handcrafted Footwear & Sneakers for Pakistan';
+export const APP_NAME = 'Bajaur OX Shoes';
+export const APP_DESCRIPTION = 'Handcrafted Leather Footwear, Peshawari Chappal, Oxford Shoes, Formal Footwear & Sneakers in Pakistan | Bajaur OX Shoes';
 export const CURRENCY_CODE = 'PKR';
 export const GST_RATE = 0.17; // 17% Pakistani General Sales Tax
 export const FREE_SHIPPING_THRESHOLD = 5000; // Free shipping over PKR 5,000
 export const COD_MAX_LIMIT_WITHOUT_OTP = 10000; // Require OTP verification for COD > PKR 10,000
+
+export const STORE_ADDRESS = {
+  name: 'Bajaur OX Shoes',
+  description: 'Bajaur OX Shoes Shop is located in District Bajaur, Inayat Killi Bazar, Bypass Road, near Inam Plaza.',
+  street: 'Inayat Killi Bazar, Bypass Road, near Inam Plaza',
+  area: 'Inayat Killi Bazar',
+  road: 'Bypass Road',
+  landmark: 'Near Inam Plaza',
+  locality: 'Inayat Killi',
+  district: 'Bajaur',
+  country: 'Pakistan',
+  plusCode: 'QF33+Q6F, Inayat Killi',
+  latitude: 34.7544498,
+  longitude: 71.4530333,
+  whatsapp: '+92 300 0914546',
+  whatsappRaw: '+923000914546',
+  whatsappUrl: 'https://wa.me/923000914546',
+  googleMapsUrl: 'https://www.google.com/maps/search/?api=1&query=34.7544498%2C71.4530333',
+} as const;
 
 export const NAV_LINKS = [
   { label: 'Men', labelUr: 'مردانہ', href: '/shop?category=Men' },

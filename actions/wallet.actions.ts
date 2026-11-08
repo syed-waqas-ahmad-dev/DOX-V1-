@@ -18,7 +18,7 @@ import { TransactionStatus, type IWalletTransaction } from '@/types';
 import { Types } from 'mongoose';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { isElevatedAdminRole } from '@/lib/auth-guard';
+import { isElevatedAdminRole, verifyDepartmentAuth } from '@/lib/auth-guard';
 import {
   addCreditInternal,
   deductCreditInternal,
@@ -86,7 +86,7 @@ export async function getWalletBalance(userId?: string): Promise<ActionResult<{ 
 
 /**
  * Add credit to user's wallet and record in transaction ledger.
- * When invoked directly as a Server Action, requires SUPER_ADMIN or ADMIN authorization.
+ * When invoked directly as a Server Action, requires SUPER_ADMIN or ADMIN authorization with live DB verification.
  * Internal server-to-server callers (referrals, orders) use addCreditInternal directly.
  */
 export async function addCredit(
@@ -97,14 +97,8 @@ export async function addCredit(
   status: TransactionStatus = TransactionStatus.COMPLETED
 ): Promise<ActionResult<{ balance: number; transaction: IWalletTransaction }>> {
   try {
-    let session = null;
-    try {
-      session = await getServerSession(authOptions);
-    } catch {
-      session = null;
-    }
-
-    if (!session?.user || !isElevatedAdminRole((session.user as { role?: string }).role)) {
+    const auth = await verifyDepartmentAuth({ allowElevatedAdmin: true });
+    if (!auth.authorized) {
       return errorResponse('Unauthorized: Administrative clearance required to credit customer wallets.');
     }
 
@@ -116,7 +110,7 @@ export async function addCredit(
 
 /**
  * Deduct credit from user's wallet atomically on checkout.
- * When invoked directly as a Server Action, requires SUPER_ADMIN or ADMIN authorization.
+ * When invoked directly as a Server Action, requires SUPER_ADMIN or ADMIN authorization with live DB verification.
  * Internal server-to-server callers (checkout) use deductCreditInternal directly.
  */
 export async function deductCredit(
@@ -126,14 +120,8 @@ export async function deductCredit(
   referenceId?: string
 ): Promise<ActionResult<{ balance: number; transaction: IWalletTransaction }>> {
   try {
-    let session = null;
-    try {
-      session = await getServerSession(authOptions);
-    } catch {
-      session = null;
-    }
-
-    if (!session?.user || !isElevatedAdminRole((session.user as { role?: string }).role)) {
+    const auth = await verifyDepartmentAuth({ allowElevatedAdmin: true });
+    if (!auth.authorized) {
       return errorResponse('Unauthorized: Administrative clearance required to deduct customer credits.');
     }
 

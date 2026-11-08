@@ -66,6 +66,82 @@ export function isDatabaseConnected(): boolean {
 }
 
 /**
+ * Determines whether a MongoDB URI or connection configuration has been provided.
+ */
+export function isDatabaseConfigured(): boolean {
+  const rawUri = process.env.MONGODB_URI?.trim();
+  const rawDbName = process.env.MONGODB_DB_NAME?.trim();
+  const hasRawUri = Boolean(rawUri && rawUri.length > 0);
+  const hasRawDbUri = Boolean(
+    rawDbName && (rawDbName.startsWith('mongodb://') || rawDbName.startsWith('mongodb+srv://'))
+  );
+
+  if (process.env.NODE_ENV === 'production') {
+    return hasRawUri || hasRawDbUri;
+  }
+
+  const { uri } = resolveMongoConfig();
+  return Boolean(uri) || hasRawUri || hasRawDbUri;
+}
+
+/**
+ * Determines whether the application is running in an explicitly recognized offline mock environment.
+ * Strict Security Rules:
+ * 1. Mock authorization must be disabled by default. Requires ALLOW_OFFLINE_MOCK_AUTH === 'true'.
+ * 2. NEVER permitted in production (NODE_ENV === 'production' or APP_ENV === 'production').
+ * 3. NEVER permitted in Vercel preview or production deployments (VERCEL_ENV === 'preview' | 'production' or VERCEL === '1' without local dev).
+ * 4. NEVER permitted in staging environments (NODE_ENV === 'staging' | APP_ENV === 'staging' | ENVIRONMENT === 'staging').
+ * 5. NEVER permitted in CI environments unless running automated tests (CI === 'true' and NODE_ENV !== 'test').
+ * 6. Permitted ONLY in explicitly approved local development (NODE_ENV === 'development') or test (NODE_ENV === 'test').
+ * 7. NEVER permitted if a database URI is configured (live DB configuration always takes precedence).
+ */
+export function isApprovedMockEnvironment(): boolean {
+  // 1. Mock authorization must be disabled by default (explicit opt-in required)
+  if (process.env.ALLOW_OFFLINE_MOCK_AUTH !== 'true') {
+    return false;
+  }
+
+  // 2. Never permitted if database is configured (database configuration always takes precedence)
+  if (isDatabaseConfigured()) {
+    return false;
+  }
+
+  const nodeEnv = process.env.NODE_ENV as string | undefined;
+  const appEnv = process.env.APP_ENV;
+  const vercelEnv = process.env.VERCEL_ENV;
+  const isVercel = process.env.VERCEL === '1';
+  const customEnv = process.env.ENVIRONMENT;
+  const isCI = process.env.CI === 'true';
+
+  // 3. Explicitly disallow production environments
+  if (nodeEnv === 'production' || appEnv === 'production') {
+    return false;
+  }
+
+  // 4. Explicitly disallow Vercel Preview & Production deployments
+  if (vercelEnv === 'preview' || vercelEnv === 'production' || (isVercel && vercelEnv !== 'development')) {
+    return false;
+  }
+
+  // 5. Explicitly disallow staging environments
+  if (nodeEnv === 'staging' || appEnv === 'staging' || customEnv === 'staging') {
+    return false;
+  }
+
+  // 6. Explicitly disallow CI environments unless explicitly running automated tests
+  if (isCI && nodeEnv !== 'test') {
+    return false;
+  }
+
+  // 7. Whitelist: Only permit local development or automated test environments
+  if (nodeEnv !== 'development' && nodeEnv !== 'test') {
+    return false;
+  }
+
+  return true;
+}
+
+/**
  * Establishes or retrieves the cached singleton MongoDB connection.
  * Configured with enterprise connection pooling, fail-fast buffering, and graceful offline fallback.
  *
@@ -168,7 +244,7 @@ export function getConnectionState(): {
     readyState,
     host: mongoose.connection.host || null,
     database: mongoose.connection.name || dbName || null,
-    isConfigured: Boolean(uri),
+    isConfigured: isDatabaseConfigured(),
   };
 }
 

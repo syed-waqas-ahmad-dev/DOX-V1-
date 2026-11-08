@@ -53,8 +53,7 @@ export default function UserProfilePage() {
   const isAdmin = Boolean(
     session?.user && (
       userRole === 'admin' ||
-      userRole === 'super_admin' ||
-      userRole === 'manager'
+      userRole === 'super_admin'
     )
   );
 

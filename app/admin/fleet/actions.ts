@@ -15,17 +15,22 @@ import { Order } from '@/models/Order';
 import { DeliveryPartner } from '@/models/DeliveryPartner';
 import { DeliveryPartnerStatus } from '@/types';
 
+import { cookies } from 'next/headers';
+import { RIDER_COOKIE_NAME, verifyRiderToken } from '@/lib/rider-auth';
+import { verifySuperAdminAuth, isElevatedAdminRole } from '@/lib/auth-guard';
+import { verifyDeliveryAdminAuth } from '@/actions/delivery.actions';
+
 /**
- * Assigns an order to a rider with super_admin permission and city matching verification.
+ * Assigns an order to a rider with delivery:dispatch permission and city matching verification.
  */
 export async function assignOrderToRider(
   orderId: string,
   riderId: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const session = await getServerSession(authOptions);
-    if (session?.user?.role !== 'super_admin') {
-      return { success: false, error: 'Unauthorized' };
+    const auth = await verifyDeliveryAdminAuth('delivery:dispatch');
+    if (!auth.authorized) {
+      return { success: false, error: 'Unauthorized: Delivery dispatch clearance required.' };
     }
 
     if (!orderId || !riderId) {
@@ -56,8 +61,8 @@ export async function assignOrderToRider(
       riderStatus: 'assigned',
     };
 
-    if (session.user.id) {
-      updateData.lastUpdatedBy = session.user.id;
+    if (auth.adminId) {
+      updateData.lastUpdatedBy = auth.adminId;
     }
 
     await Order.findByIdAndUpdate(orderId, {
@@ -74,6 +79,7 @@ export async function assignOrderToRider(
 
 /**
  * Registers a new delivery rider in the fleet with unique phone check and bcrypt hashing.
+ * Strictly gated behind Super Admin clearance.
  */
 export async function createRiderBySuperAdmin(data: {
   name: string;
@@ -82,9 +88,9 @@ export async function createRiderBySuperAdmin(data: {
   city: string;
 }): Promise<{ success: boolean; error?: string }> {
   try {
-    const session = await getServerSession(authOptions);
-    if (session?.user?.role !== 'super_admin') {
-      return { success: false, error: 'Unauthorized' };
+    const auth = await verifySuperAdminAuth();
+    if (!auth.authorized) {
+      return { success: false, error: auth.error || 'Unauthorized' };
     }
 
     if (!data.name?.trim() || !data.phone?.trim() || !data.password || !data.city?.trim()) {
@@ -114,7 +120,7 @@ export async function createRiderBySuperAdmin(data: {
       currentLoad: 0,
       totalDeliveries: 0,
       isDeleted: false,
-      createdByAdminId: session.user.id || 'super_admin',
+      createdByAdminId: auth.userId || 'super_admin',
     });
 
     return { success: true };
@@ -126,19 +132,15 @@ export async function createRiderBySuperAdmin(data: {
 
 /**
  * Validates delivery OTP and marks the order as delivered and paid.
- * Strictly NO wallet bonus. Decrements rider load when applicable.
+ * Enforces cryptographic HMAC rider session cookie verification and assignment riderId matching.
+ * Preserves separate explicit Admin completion path.
  */
 export async function riderAction_markDelivered(
   orderId: string,
   otp: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const session = await getServerSession(authOptions);
-    if (session?.user?.role !== 'rider') {
-      return { success: false, error: 'Unauthorized' };
-    }
-
-    if (!orderId || !otp) {
+    if (!orderId || !otp?.trim()) {
       return { success: false, error: 'Order ID and OTP are required' };
     }
 
@@ -149,13 +151,59 @@ export async function riderAction_markDelivered(
       return { success: false, error: 'Order not found' };
     }
 
-    const orderWithOtp = order as unknown as { deliveryOTP?: string; codOtp?: string; riderId?: string };
-    const expectedOtp = orderWithOtp.deliveryOTP || orderWithOtp.codOtp;
+    const orderWithOtp = order as unknown as {
+      status?: string;
+      deliveryOTP?: string;
+      codOtp?: string;
+      riderId?: string;
+    };
 
+    if (orderWithOtp.status === 'cancelled' || orderWithOtp.status === 'delivered') {
+      return { success: false, error: `Order cannot be marked delivered in ${orderWithOtp.status} status` };
+    }
+
+    // Determine authorization:
+    // 1. Separate & explicitly verified Admin path
+    const session = await getServerSession(authOptions);
+    const sessionRole = (session?.user as { role?: string })?.role;
+    const isAdmin = isElevatedAdminRole(sessionRole);
+
+    let authenticatedRiderId: string | null = null;
+
+    if (!isAdmin) {
+      // 2. Rider path: Must possess valid cryptographic HMAC cookie token matching assigned order riderId
+      let token: string | undefined;
+      try {
+        const cookieStore = await cookies();
+        token = cookieStore.get(RIDER_COOKIE_NAME)?.value;
+      } catch {
+        token = undefined;
+      }
+
+      if (!token) {
+        return { success: false, error: 'Unauthorized: Valid rider session cookie required' };
+      }
+
+      const payload = verifyRiderToken(token);
+      if (!payload || !payload.partnerId || payload.role !== 'rider') {
+        return { success: false, error: 'Unauthorized: Invalid or expired rider session token' };
+      }
+
+      authenticatedRiderId = payload.partnerId;
+
+      const orderRiderIdStr = orderWithOtp.riderId ? orderWithOtp.riderId.toString() : '';
+      if (!orderRiderIdStr || orderRiderIdStr !== authenticatedRiderId) {
+        return { success: false, error: 'Unauthorized: You are not the assigned rider for this order' };
+      }
+    }
+
+    // OTP Verification (Preserve existing logic)
+    const expectedOtp = orderWithOtp.deliveryOTP || orderWithOtp.codOtp;
     if (!expectedOtp || expectedOtp !== otp.trim()) {
       return { success: false, error: 'Invalid OTP' };
     }
 
+    // Execute delivery completion
     await Order.findByIdAndUpdate(
       orderId,
       {
@@ -168,8 +216,9 @@ export async function riderAction_markDelivered(
       { runValidators: false }
     );
 
-    if (orderWithOtp.riderId) {
-      await DeliveryPartner.findByIdAndUpdate(orderWithOtp.riderId, {
+    const targetRiderId = orderWithOtp.riderId || authenticatedRiderId;
+    if (targetRiderId) {
+      await DeliveryPartner.findByIdAndUpdate(targetRiderId, {
         $inc: { currentLoad: -1, totalDeliveries: 1 },
       });
     }

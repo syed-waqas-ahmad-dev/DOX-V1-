@@ -7,6 +7,8 @@
  */
 
 import {
+  UserRole,
+  Department,
   ProductCategory,
   ProductSubCategory,
   ProductBrand,
@@ -867,6 +869,7 @@ interface GlobalMockStore {
   referrals: any[];
   walletTransactions: any[];
   userWallets: Record<string, number>;
+  users?: any[];
 }
 
 declare global {
@@ -1592,5 +1595,101 @@ export const MockDb = {
     return mockStore.walletTransactions.filter(
       (t) => t.userId === userId || t.userId?.toString() === userId
     );
+  },
+
+  getUserById(userId: string): { _id: string; role: string; department?: string | null; permissions?: string[]; isDeleted?: boolean } | null {
+    if (!mockStore.users) {
+      mockStore.users = [
+        {
+          _id: '660e1234567890abcdef1000',
+          role: UserRole.CUSTOMER,
+          department: null,
+          permissions: [],
+          isDeleted: false,
+        },
+        {
+          _id: 'super_admin_id',
+          role: UserRole.SUPER_ADMIN,
+          department: null,
+          permissions: [
+            'products:read',
+            'products:write',
+            'products:delete',
+            'stock:update',
+            'orders:read',
+            'orders:update_status',
+            'orders:assign_courier',
+            'returns:read',
+            'returns:write',
+            'delivery:read',
+            'delivery:write',
+            'marketing:manage',
+            'finance:view_reports',
+          ],
+          isDeleted: false,
+        },
+        {
+          _id: 'admin_id',
+          role: UserRole.ADMIN,
+          department: null,
+          permissions: [
+            'products:read',
+            'products:write',
+            'products:delete',
+            'stock:update',
+            'orders:read',
+            'orders:update_status',
+            'orders:assign_courier',
+            'returns:read',
+            'returns:write',
+            'delivery:read',
+            'delivery:write',
+            'marketing:manage',
+            'finance:view_reports',
+          ],
+          isDeleted: false,
+        },
+        {
+          _id: 'manager_orders_id',
+          role: UserRole.MANAGER,
+          department: Department.ORDERS,
+          permissions: ['orders:read', 'orders:update_status', 'orders:assign_courier'],
+          isDeleted: false,
+        },
+        {
+          _id: 'manager_inventory_id',
+          role: UserRole.MANAGER,
+          department: Department.INVENTORY,
+          permissions: ['products:read', 'stock:update'],
+          isDeleted: false,
+        },
+        {
+          _id: 'manager_unassigned_id',
+          role: UserRole.MANAGER,
+          department: null,
+          permissions: [],
+          isDeleted: false,
+        },
+        {
+          _id: 'deleted_user_id',
+          role: UserRole.CUSTOMER,
+          department: null,
+          permissions: [],
+          isDeleted: true,
+        },
+      ];
+    }
+    const found = mockStore.users.find(
+      (u: any) => u._id === userId || u._id?.toString() === userId
+    );
+    return found || null;
+  },
+
+  addUser(user: any): any {
+    if (!mockStore.users) {
+      mockStore.users = [];
+    }
+    mockStore.users.push(user);
+    return user;
   },
 };

@@ -16,18 +16,12 @@ import { OrderStatus, PaymentStatus, type AdminDashboardMetrics, UserRole } from
 import { MockDb } from '@/lib/db/mock-store';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { isAdminRole } from '@/lib/auth-guard';
+import { isElevatedAdminRole, verifyDepartmentAuth } from '@/lib/auth-guard';
 
 export async function getAdminMetrics(): Promise<ActionResult<AdminDashboardMetrics>> {
-  let session = null;
-  try {
-    session = await getServerSession(authOptions);
-  } catch {
-    session = null;
-  }
-
-  if (!session?.user || !isAdminRole((session.user as { role: UserRole }).role)) {
-    return errorResponse('Unauthorized: Administrative clearance required.');
+  const auth = await verifyDepartmentAuth({ allowElevatedAdmin: true });
+  if (!auth.authorized) {
+    return errorResponse(auth.error || 'Unauthorized: Administrative clearance required.');
   }
 
   try {

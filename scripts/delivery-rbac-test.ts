@@ -39,9 +39,11 @@ try {
   // Ignore in bundled Next.js context
 }
 
+import fs from 'fs';
+import path from 'path';
 import { UserRole, DeliveryAssignmentStatus, DeliveryPartnerStatus, PaymentStatus } from '../types';
 import { isElevatedAdminRole } from '../lib/auth-guard';
-import { signRiderPayload, verifyRiderToken } from '../lib/rider-auth';
+import { signRiderPayload, verifyRiderToken, getRiderSessionSecret, RIDER_COOKIE_NAME } from '../lib/rider-auth';
 import { MockDb } from '../lib/db/mock-store';
 import {
   getAllDeliveryPartners,
@@ -60,6 +62,7 @@ import {
   updateRiderAssignmentStatus,
   updateRiderLocation,
   getCurrentRiderProfile,
+  validateGpsCoordinates,
 } from '../actions/delivery.actions';
 
 let totalTests = 0;
@@ -301,9 +304,9 @@ async function runDeliverySecurityTests() {
   );
 
   // -------------------------------------------------------------------------
-  // 5. Cryptographic Session Token Verification & Inactive Session Invalidation
+  // 5. Cryptographic Session Token & HMAC Secret Verification (SEC-01)
   // -------------------------------------------------------------------------
-  console.log('\n--- 5. Cryptographic Token & Inactive Session Invalidation (STEP 2) ---');
+  console.log('\n--- 5. Cryptographic Token & HMAC Secret Verification (SEC-01) ---');
 
   const samplePayload = {
     partnerId: 'rider-partner-101',
@@ -313,12 +316,105 @@ async function runDeliverySecurityTests() {
     exp: Date.now() + 7 * 24 * 60 * 60 * 1000,
   };
 
+  // 5.1: Missing secret fail-closed validation
+  const savedSecret = process.env.NEXTAUTH_SECRET;
+  delete process.env.NEXTAUTH_SECRET;
+
+  let missingThrows = false;
+  try {
+    getRiderSessionSecret();
+  } catch {
+    missingThrows = true;
+  }
+  assert(
+    missingThrows,
+    'SEC-01: getRiderSessionSecret fails closed (throws) when NEXTAUTH_SECRET is missing'
+  );
+
+  let signMissingThrows = false;
+  try {
+    signRiderPayload(samplePayload);
+  } catch {
+    signMissingThrows = true;
+  }
+  assert(
+    signMissingThrows,
+    'SEC-01: signRiderPayload fails closed (throws) when NEXTAUTH_SECRET is missing'
+  );
+
+  assert(
+    verifyRiderToken('dummy.token') === null,
+    'SEC-01: verifyRiderToken fails closed (returns null) when NEXTAUTH_SECRET is missing'
+  );
+
+  // 5.2: Empty string secret fail-closed validation
+  process.env.NEXTAUTH_SECRET = '';
+  let emptyThrows = false;
+  try {
+    getRiderSessionSecret();
+  } catch {
+    emptyThrows = true;
+  }
+  assert(
+    emptyThrows,
+    'SEC-01: getRiderSessionSecret fails closed (throws) when NEXTAUTH_SECRET is empty string'
+  );
+
+  // 5.3: Whitespace-only secret fail-closed validation
+  process.env.NEXTAUTH_SECRET = '   \t  \n ';
+  let wsThrows = false;
+  try {
+    getRiderSessionSecret();
+  } catch {
+    wsThrows = true;
+  }
+  assert(
+    wsThrows,
+    'SEC-01: getRiderSessionSecret fails closed (throws) when NEXTAUTH_SECRET is whitespace-only'
+  );
+
+  // 5.4: Valid configured secret resolution
+  const testSecretValue = 'ox-shoes-test-ephemeral-key-2026-audit';
+  process.env.NEXTAUTH_SECRET = testSecretValue;
+  let validResolved = false;
+  try {
+    const sec = getRiderSessionSecret();
+    validResolved = typeof sec === 'string' && sec.length > 0;
+  } catch {
+    validResolved = false;
+  }
+  assert(
+    validResolved,
+    'SEC-01: getRiderSessionSecret succeeds when NEXTAUTH_SECRET is configured'
+  );
+
+  // 5.5: Signing and verification use the same validated secret
   const validToken = signRiderPayload(samplePayload);
   const verified = verifyRiderToken(validToken);
   assert(
     verified !== null && verified.partnerId === 'rider-partner-101' && verified.role === 'rider',
-    'Valid signed rider session token successfully verifies',
+    'SEC-01: Valid signed rider session token successfully verifies using configured secret',
     `Payload partnerId: ${verified?.partnerId}`
+  );
+
+  // 5.6: Verification fails if secret is rotated
+  process.env.NEXTAUTH_SECRET = 'ox-shoes-rotated-different-test-key-2026';
+  const rotatedResult = verifyRiderToken(validToken);
+  assert(
+    rotatedResult === null,
+    'SEC-01: Token signed with previous secret fails verification after secret rotation (signature mismatch)'
+  );
+  // Restore test secret for subsequent tests
+  process.env.NEXTAUTH_SECRET = testSecretValue;
+
+  // 5.7: Verify no hardcoded fallback string remains in lib/rider-auth.ts
+  const authSource = fs.readFileSync(path.resolve(__dirname, '../lib/rider-auth.ts'), 'utf8');
+  const hasHardcodedFallback =
+    authSource.includes('ox-shoes-super-secret-key-2026') ||
+    /process\.env\.NEXTAUTH_SECRET\s*\|\|/.test(authSource);
+  assert(
+    !hasHardcodedFallback,
+    'SEC-01: Zero hardcoded HMAC fallback remains in lib/rider-auth.ts source code'
   );
 
   // Tampered payload test
@@ -347,6 +443,295 @@ async function runDeliverySecurityTests() {
     'Expired rider session token is rejected',
     'Expiration check enforced'
   );
+
+  // -------------------------------------------------------------------------
+  // 5.8: GPS Coordinate Validation (SEC-02)
+  // -------------------------------------------------------------------------
+  console.log('\n--- 5.8. GPS Coordinate Validation (SEC-02) ---');
+
+  // Boundary coordinates
+  assert(
+    (await validateGpsCoordinates(-90, -180)).valid === true &&
+    (await validateGpsCoordinates(90, 180)).valid === true &&
+    (await validateGpsCoordinates(-90, 180)).valid === true &&
+    (await validateGpsCoordinates(90, -180)).valid === true,
+    'SEC-02: Boundary coordinates [-90, 90] and [-180, 180] are valid'
+  );
+
+  // Normal valid coordinates
+  assert(
+    (await validateGpsCoordinates(31.5204, 74.3587)).valid === true &&
+    (await validateGpsCoordinates(24.8607, 67.0011)).valid === true &&
+    (await validateGpsCoordinates(0, 0)).valid === true,
+    'SEC-02: Standard geographic coordinates (Lahore, Karachi, 0,0) are valid'
+  );
+
+  // NaN coordinates rejected
+  assert(
+    (await validateGpsCoordinates(NaN, 74.3587)).valid === false &&
+    (await validateGpsCoordinates(31.5204, NaN)).valid === false &&
+    (await validateGpsCoordinates(NaN, NaN)).valid === false,
+    'SEC-02: NaN latitude or longitude is strictly rejected'
+  );
+
+  // Infinity and -Infinity coordinates rejected
+  assert(
+    (await validateGpsCoordinates(Infinity, 74.3587)).valid === false &&
+    (await validateGpsCoordinates(-Infinity, 74.3587)).valid === false &&
+    (await validateGpsCoordinates(31.5204, Infinity)).valid === false &&
+    (await validateGpsCoordinates(31.5204, -Infinity)).valid === false &&
+    (await validateGpsCoordinates(Infinity, Infinity)).valid === false,
+    'SEC-02: Positive and negative Infinity coordinates are strictly rejected'
+  );
+
+  // Latitude outside bounds rejected
+  assert(
+    (await validateGpsCoordinates(90.0001, 74.3587)).valid === false &&
+    (await validateGpsCoordinates(-90.0001, 74.3587)).valid === false &&
+    (await validateGpsCoordinates(150, 74.3587)).valid === false &&
+    (await validateGpsCoordinates(-120, 74.3587)).valid === false,
+    'SEC-02: Latitude outside [-90, 90] is strictly rejected'
+  );
+
+  // Longitude outside bounds rejected
+  assert(
+    (await validateGpsCoordinates(31.5204, 180.0001)).valid === false &&
+    (await validateGpsCoordinates(31.5204, -180.0001)).valid === false &&
+    (await validateGpsCoordinates(31.5204, 250)).valid === false &&
+    (await validateGpsCoordinates(31.5204, -200)).valid === false,
+    'SEC-02: Longitude outside [-180, 180] is strictly rejected'
+  );
+
+  // Invalid types rejected
+  assert(
+    (await validateGpsCoordinates('31.5204', 74.3587)).valid === false &&
+    (await validateGpsCoordinates(31.5204, null)).valid === false &&
+    (await validateGpsCoordinates(undefined, undefined)).valid === false &&
+    (await validateGpsCoordinates({}, [])).valid === false,
+    'SEC-02: Non-number coordinate types (string, null, undefined, object) are rejected'
+  );
+
+  // -------------------------------------------------------------------------
+  // 5.8.1. updateRiderAssignmentStatus GPS Telemetry & Mutation Guard
+  // -------------------------------------------------------------------------
+  console.log('\n--- 5.8.1. updateRiderAssignmentStatus GPS Telemetry & Mutation Guard ---');
+
+  // Helper to mock active rider session
+  const nextAuthNext = require('next-auth/next');
+  const originalGetServerSession = nextAuthNext.getServerSession;
+  const setMockRiderSession = (partnerId: string | null) => {
+    if (!partnerId) {
+      nextAuthNext.getServerSession = async () => null;
+      return;
+    }
+    nextAuthNext.getServerSession = async () => ({
+      user: {
+        id: partnerId,
+        role: 'rider',
+      },
+    });
+  };
+
+  const gpsTestPartner = MockDb.createDeliveryPartner({
+    name: 'GPS Telemetry Rider',
+    phone: '03001234999',
+    status: DeliveryPartnerStatus.ACTIVE,
+    walletBalance: 0,
+    codCollectedBalance: 0,
+    totalDeliveries: 0,
+  });
+
+  const gpsPartnerId = gpsTestPartner._id.toString();
+  setMockRiderSession(gpsPartnerId);
+
+  const gpsOrder1 = MockDb.createOrder({
+    orderNumber: 'OX-GPS-001',
+    totalAmount: 1500,
+    paymentStatus: PaymentStatus.PENDING,
+  });
+
+  const gpsAssignment1 = MockDb.createDeliveryAssignment({
+    orderId: gpsOrder1._id,
+    orderNumber: gpsOrder1.orderNumber,
+    partnerId: gpsTestPartner._id,
+    partnerName: gpsTestPartner.name,
+    partnerPhone: gpsTestPartner.phone,
+    status: DeliveryAssignmentStatus.OUT_FOR_DELIVERY,
+    codAmount: 1500,
+  });
+
+  // Test: Incomplete coordinates (lat only) rejected
+  const resLatOnly = await updateRiderAssignmentStatus({
+    assignmentId: gpsAssignment1._id.toString(),
+    partnerId: gpsPartnerId,
+    status: DeliveryAssignmentStatus.DELIVERED,
+    lat: 24.8607,
+  });
+  assert(
+    resLatOnly.success === false && errStr(resLatOnly).includes('Both latitude and longitude must be provided'),
+    'GPS Telemetry: Latitude-only coordinate submission is rejected',
+    `Received: "${errStr(resLatOnly)}"`
+  );
+
+  // Test: Incomplete coordinates (lng only) rejected
+  const resLngOnly = await updateRiderAssignmentStatus({
+    assignmentId: gpsAssignment1._id.toString(),
+    partnerId: gpsPartnerId,
+    status: DeliveryAssignmentStatus.DELIVERED,
+    lng: 67.0011,
+  });
+  assert(
+    resLngOnly.success === false && errStr(resLngOnly).includes('Both latitude and longitude must be provided'),
+    'GPS Telemetry: Longitude-only coordinate submission is rejected'
+  );
+
+  // Test: Latitude out of range rejected
+  const resLatOutOfRange = await updateRiderAssignmentStatus({
+    assignmentId: gpsAssignment1._id.toString(),
+    partnerId: gpsPartnerId,
+    status: DeliveryAssignmentStatus.DELIVERED,
+    lat: 91.5,
+    lng: 67.0011,
+  });
+  assert(
+    resLatOutOfRange.success === false && errStr(resLatOutOfRange).includes('Latitude out of range'),
+    'GPS Telemetry: Out-of-range latitude (> 90) is rejected'
+  );
+
+  // Test: Longitude out of range rejected
+  const resLngOutOfRange = await updateRiderAssignmentStatus({
+    assignmentId: gpsAssignment1._id.toString(),
+    partnerId: gpsPartnerId,
+    status: DeliveryAssignmentStatus.DELIVERED,
+    lat: 24.8607,
+    lng: 195.0,
+  });
+  assert(
+    resLngOutOfRange.success === false && errStr(resLngOutOfRange).includes('Longitude out of range'),
+    'GPS Telemetry: Out-of-range longitude (> 180) is rejected'
+  );
+
+  // Test: NaN coordinates rejected
+  const resNaN = await updateRiderAssignmentStatus({
+    assignmentId: gpsAssignment1._id.toString(),
+    partnerId: gpsPartnerId,
+    status: DeliveryAssignmentStatus.DELIVERED,
+    lat: NaN,
+    lng: 67.0011,
+  });
+  assert(
+    resNaN.success === false && errStr(resNaN).includes('finite numbers'),
+    'GPS Telemetry: NaN coordinate is rejected'
+  );
+
+  // Test: Infinity coordinates rejected
+  const resInf = await updateRiderAssignmentStatus({
+    assignmentId: gpsAssignment1._id.toString(),
+    partnerId: gpsPartnerId,
+    status: DeliveryAssignmentStatus.DELIVERED,
+    lat: 24.8607,
+    lng: Infinity,
+  });
+  assert(
+    resInf.success === false && errStr(resInf).includes('finite numbers'),
+    'GPS Telemetry: Infinity coordinate is rejected'
+  );
+
+  // Test: Non-numeric type coordinates rejected
+  const resNonNum = await updateRiderAssignmentStatus({
+    assignmentId: gpsAssignment1._id.toString(),
+    partnerId: gpsPartnerId,
+    status: DeliveryAssignmentStatus.DELIVERED,
+    lat: '24.8607' as unknown as number,
+    lng: 67.0011,
+  });
+  assert(
+    resNonNum.success === false && errStr(resNonNum).includes('valid numbers'),
+    'GPS Telemetry: String coordinate is rejected'
+  );
+
+  // Test: Zero state mutation after rejected coordinate validation
+  const postRejectAssignment = MockDb.getDeliveryAssignmentById(gpsAssignment1._id.toString());
+  const postRejectPartner = MockDb.getDeliveryPartnerById(gpsPartnerId);
+  assert(
+    postRejectAssignment?.status === DeliveryAssignmentStatus.OUT_FOR_DELIVERY &&
+      postRejectPartner?.walletBalance === 0 &&
+      postRejectPartner?.totalDeliveries === 0,
+    'GPS Telemetry: Zero mutations occurred to assignment status, wallet balance, or delivery count after rejected validations'
+  );
+
+  // Test: Omitted coordinates proceed normally (preserves optional behavior)
+  const gpsOrder2 = MockDb.createOrder({
+    orderNumber: 'OX-GPS-002',
+    totalAmount: 2000,
+    paymentStatus: PaymentStatus.PENDING,
+  });
+  const gpsAssignment2 = MockDb.createDeliveryAssignment({
+    orderId: gpsOrder2._id,
+    orderNumber: gpsOrder2.orderNumber,
+    partnerId: gpsTestPartner._id,
+    partnerName: gpsTestPartner.name,
+    partnerPhone: gpsTestPartner.phone,
+    status: DeliveryAssignmentStatus.OUT_FOR_DELIVERY,
+    codAmount: 2000,
+  });
+  const resOmitted = await updateRiderAssignmentStatus({
+    assignmentId: gpsAssignment2._id.toString(),
+    partnerId: gpsPartnerId,
+    status: DeliveryAssignmentStatus.DELIVERED,
+  });
+  assert(
+    resOmitted.success === true,
+    'GPS Telemetry: Omitted coordinates proceed normally without error (preserves optional telemetry)'
+  );
+
+  // Test: Valid coordinates proceed normally and succeed
+  const gpsOrder3 = MockDb.createOrder({
+    orderNumber: 'OX-GPS-003',
+    totalAmount: 1800,
+    paymentStatus: PaymentStatus.PENDING,
+  });
+  const gpsAssignment3 = MockDb.createDeliveryAssignment({
+    orderId: gpsOrder3._id,
+    orderNumber: gpsOrder3.orderNumber,
+    partnerId: gpsTestPartner._id,
+    partnerName: gpsTestPartner.name,
+    partnerPhone: gpsTestPartner.phone,
+    status: DeliveryAssignmentStatus.OUT_FOR_DELIVERY,
+    codAmount: 1800,
+  });
+  const resValid = await updateRiderAssignmentStatus({
+    assignmentId: gpsAssignment3._id.toString(),
+    partnerId: gpsPartnerId,
+    status: DeliveryAssignmentStatus.DELIVERED,
+    lat: 24.8607,
+    lng: 67.0011,
+  });
+  // Test: updateRiderLocation in MockDb persists both coordinates AND lastLocationUpdate
+  const mockRiderLocPartner = MockDb.createDeliveryPartner({
+    name: 'Mock GPS Update Partner',
+    phone: '03008889911',
+    status: DeliveryPartnerStatus.ACTIVE,
+  });
+  setMockRiderSession(mockRiderLocPartner._id.toString());
+
+  const mockLocRes = await updateRiderLocation(mockRiderLocPartner._id.toString(), 34.0151, 71.5249);
+  const fetchedMockPartner = MockDb.getDeliveryPartnerById(mockRiderLocPartner._id.toString());
+  const allPartnersList = MockDb.getDeliveryPartners();
+  const foundInAllPartners = allPartnersList.find((p) => p._id.toString() === mockRiderLocPartner._id.toString());
+
+  assert(
+    mockLocRes.success === true &&
+      fetchedMockPartner?.currentLat === 34.0151 &&
+      fetchedMockPartner?.currentLng === 71.5249 &&
+      typeof fetchedMockPartner?.lastLocationUpdate === 'string' &&
+      foundInAllPartners?.currentLat === 34.0151,
+    'GPS Telemetry: updateRiderLocation updates currentLat, currentLng, and lastLocationUpdate timestamp in MockDb',
+    `Updated timestamp: ${fetchedMockPartner?.lastLocationUpdate}`
+  );
+
+  // Clean up session mock
+  nextAuthNext.getServerSession = originalGetServerSession;
 
   // Mock Store Rider Status Verification Tests (Deleted & Inactive Riders)
   const activePartner = MockDb.createDeliveryPartner({

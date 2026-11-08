@@ -8,9 +8,8 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
 import { UserRole } from '@/types';
+import { verifyDepartmentAuth, isElevatedAdminRole } from '@/lib/auth-guard';
 import { connectToDatabase, isDatabaseConnected } from '@/lib/db/connect';
 import { Order } from '@/models/Order';
 import { Types } from 'mongoose';
@@ -20,26 +19,11 @@ export const dynamic = 'force-dynamic';
 export async function POST(req: NextRequest) {
   try {
     // 1. Authentication & RBAC Check
-    let session = null;
-    try {
-      session = await getServerSession(authOptions);
-    } catch {
-      session = null;
-    }
-    const sessionRole = (session?.user as { role?: string } | undefined)?.role;
-
-    if (!session?.user) {
+    const auth = await verifyDepartmentAuth();
+    if (!auth.authorized || !isElevatedAdminRole(auth.role)) {
       return NextResponse.json(
-        { success: false, error: 'Unauthorized: Authentication required.' },
-        { status: 401 }
-      );
-    }
-
-    const isAuthorized = sessionRole === UserRole.ADMIN || sessionRole === UserRole.SUPER_ADMIN;
-    if (!isAuthorized) {
-      return NextResponse.json(
-        { success: false, error: 'Forbidden: Administrative privileges required.' },
-        { status: 403 }
+        { success: false, error: auth.error || 'Forbidden: Administrative privileges required.' },
+        { status: auth.userId ? 403 : 401 }
       );
     }
 

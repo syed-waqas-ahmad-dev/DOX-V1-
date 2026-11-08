@@ -23,12 +23,12 @@ import {
   Truck,
   ArrowLeft,
   ShieldCheck,
-  QrCode,
   FileText,
   Clock,
   Sparkles,
   Phone,
 } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 
 interface InvoicePageProps {
   params: Promise<{ id: string }>;
@@ -115,7 +115,7 @@ export default function InvoicePage({ params }: InvoicePageProps) {
             Back to Order
           </Link>
           <span className="text-xs font-bold text-neutral-500 uppercase tracking-widest hidden sm:inline">
-            Official Tax Invoice
+            Official Order Invoice
           </span>
         </div>
 
@@ -155,18 +155,17 @@ export default function InvoicePage({ params }: InvoicePageProps) {
                 <p className="font-bold text-neutral-950 text-sm">{invoice.seller.legalName}</p>
                 <p>{invoice.seller.address}</p>
                 <p>{invoice.seller.city}, {invoice.seller.country}</p>
-                <p className="pt-1 font-mono text-[11px] text-neutral-500">
-                  <strong>NTN:</strong> {invoice.seller.ntn} • <strong>STRN:</strong> {invoice.seller.strn}
-                </p>
-                <p className="font-mono text-[11px] text-neutral-500">
-                  <strong>FBR POS Registration:</strong> {invoice.seller.posRegistrationNo}
-                </p>
+                {invoice.seller.ntn && (
+                  <p className="pt-1 font-mono text-[11px] text-neutral-500">
+                    <strong>NTN:</strong> {invoice.seller.ntn} {invoice.seller.strn && <>• <strong>STRN:</strong> {invoice.seller.strn}</>}
+                  </p>
+                )}
               </div>
             </div>
 
             <div className="sm:text-right space-y-2">
               <div className="inline-block px-3 py-1 rounded bg-neutral-950 text-white text-[11px] font-black uppercase tracking-widest">
-                TAX INVOICE
+                ORDER INVOICE
               </div>
               <h1 className="text-xl sm:text-2xl font-black font-mono tracking-tight text-neutral-950">
                 {invoice.invoiceNumber}
@@ -262,9 +261,9 @@ export default function InvoicePage({ params }: InvoicePageProps) {
             {/* Left: Notes & Tax Declarations */}
             <div className="space-y-3 text-xs text-neutral-500 max-w-sm">
               <div className="p-3 bg-neutral-50 rounded-lg border border-neutral-200 space-y-1">
-                <span className="font-bold text-neutral-800 block text-[11px] uppercase">Tax & FBR Declaration:</span>
+                <span className="font-bold text-neutral-800 block text-[11px] uppercase">Order Invoice Summary:</span>
                 <p className="text-[11px] leading-relaxed">
-                  This computer-generated tax invoice complies with Sales Tax Special Procedure Rules. 17% General Sales Tax has been charged and recorded for FBR compliance.
+                  This computer-generated order invoice reflects official purchase records and transparent itemized pricing for Bajaur OX Shoes.
                 </p>
               </div>
               <div className="flex items-center gap-2 text-[11px]">
@@ -321,14 +320,19 @@ export default function InvoicePage({ params }: InvoicePageProps) {
           {/* Footer Official Seal & QR Code */}
           <div className="pt-6 border-t border-neutral-200 flex flex-col sm:flex-row items-center justify-between gap-6 text-xs text-neutral-500">
             <div className="flex items-center gap-4">
-              <div className="h-16 w-16 bg-neutral-100 rounded-lg border border-neutral-300 p-2 flex flex-col items-center justify-center text-center">
-                <QrCode className="h-9 w-9 text-neutral-800" />
-                <span className="text-[8px] font-mono font-bold">SCAN FBR</span>
+              <div className="bg-white p-1 rounded-lg border border-neutral-300 shadow-sm print:border-none print:shadow-none shrink-0">
+                <QRCodeSVG
+                  value={invoice.verification.qrCodeData}
+                  size={64}
+                  level="H"
+                  includeMargin={false}
+                  className="block"
+                />
               </div>
               <div className="text-[11px] space-y-0.5">
-                <p className="font-bold text-neutral-800">FBR Digital Invoice Verification</p>
-                <p className="font-mono text-neutral-500">{invoice.verification.fbrInvoiceNumber}</p>
-                <p className="text-[10px]">Verify at e.fbr.gov.pk or scan QR barcode</p>
+                <p className="font-bold text-neutral-800 uppercase tracking-tight">SCAN TO VIEW INVOICE</p>
+                <p className="font-mono text-neutral-500">{invoice.invoiceNumber}</p>
+                <p className="text-[10px] leading-tight text-neutral-400">Scan this secure code to verify this invoice on oxshoes.pk</p>
               </div>
             </div>
 

@@ -25,7 +25,7 @@ import {
   Compass,
 } from 'lucide-react';
 
-const HQ_COORDS: [number, number] = [31.5126, 74.3541]; // MM Alam Road, Gulberg III, Lahore
+const STORE_COORDS: [number, number] = [34.7544498, 71.4530333]; // Inayat Killi Bazar, Bypass Road, near Inam Plaza, District Bajaur
 
 export default function ContactPage() {
   const [name, setName] = useState('');
@@ -56,43 +56,50 @@ export default function ContactPage() {
         {/* Header */}
         <div className="border-b border-neutral-200 pb-6 text-center max-w-2xl mx-auto space-y-2">
           <span className="text-xs font-bold uppercase tracking-widest text-amber-700 bg-amber-50 border border-amber-200 px-3 py-1 rounded-full inline-block">
-            Artisan Concierge & Corporate Office
+            Official Store & Customer Concierge
           </span>
           <h1 className="text-3xl sm:text-4xl font-black uppercase tracking-tight text-neutral-950">
-            Get in Touch with OX Shoes
+            Get in Touch with Bajaur OX Shoes
           </h1>
           <p className="text-xs sm:text-sm text-neutral-600">
-            Whether you have custom sizing inquiries, corporate gifting orders, or need urgent dispatch assistance, our Lahore atelier team is here to assist.
+            Bajaur OX Shoes Shop is located in District Bajaur, Inayat Killi Bazar, Bypass Road, near Inam Plaza. Reach out directly via WhatsApp for sizing advice, custom chappal inquiries, and order dispatches.
           </p>
         </div>
 
         {/* 3 Contact Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="p-6 rounded-2xl bg-white border border-neutral-200 shadow-sm space-y-3">
-            <div className="h-10 w-10 rounded-full bg-amber-50 text-amber-600 flex items-center justify-center">
+            <div className="h-10 w-10 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center">
               <Phone className="h-5 w-5" />
             </div>
-            <h3 className="font-bold text-sm uppercase text-neutral-950">Phone & WhatsApp</h3>
+            <h3 className="font-bold text-sm uppercase text-neutral-950">Official WhatsApp</h3>
             <p className="text-xs text-neutral-600">
-              Monday - Saturday, 10:00 AM - 9:00 PM PST
+              Direct customer assistance & orders
             </p>
-            <div className="pt-1 space-y-1 text-xs font-mono font-bold text-neutral-900">
-              <p>+92 42 35789123 (UAN)</p>
-              <p>+92 300 1234567 (WhatsApp)</p>
+            <div className="pt-1 space-y-2 text-xs font-mono font-bold text-neutral-900">
+              <p>+92 300 0914546</p>
+              <a
+                href="https://wa.me/923000914546"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-sans text-xs font-bold transition-colors shadow-xs"
+              >
+                <span>Chat on WhatsApp</span>
+                <span aria-hidden="true">→</span>
+              </a>
             </div>
           </div>
 
           <div className="p-6 rounded-2xl bg-white border border-neutral-200 shadow-sm space-y-3">
-            <div className="h-10 w-10 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center">
+            <div className="h-10 w-10 rounded-full bg-amber-50 text-amber-600 flex items-center justify-center">
               <Mail className="h-5 w-5" />
             </div>
             <h3 className="font-bold text-sm uppercase text-neutral-950">Official Email</h3>
             <p className="text-xs text-neutral-600">
-              Customer support & corporate inquiries
+              Customer support & order inquiries
             </p>
             <div className="pt-1 space-y-1 text-xs font-bold text-neutral-900">
               <p>support@oxshoes.pk</p>
-              <p>corporate@oxshoes.pk</p>
             </div>
           </div>
 
@@ -100,12 +107,12 @@ export default function ContactPage() {
             <div className="h-10 w-10 rounded-full bg-sky-50 text-sky-600 flex items-center justify-center">
               <Building className="h-5 w-5" />
             </div>
-            <h3 className="font-bold text-sm uppercase text-neutral-950">Atelier Headquarters</h3>
+            <h3 className="font-bold text-sm uppercase text-neutral-950">Shop Location</h3>
             <p className="text-xs text-neutral-600">
-              12-C/1, MM Alam Road, Gulberg III, Lahore, Pakistan
+              Inayat Killi Bazar, Bypass Road, near Inam Plaza, District Bajaur, Pakistan
             </p>
             <p className="text-[11px] font-mono text-neutral-500 pt-1">
-              NTN: 8241920-4 • STRN: 3277876123456
+              Plus Code: QF33+Q6F, Inayat Killi
             </p>
           </div>
         </div>
@@ -193,55 +200,62 @@ export default function ContactPage() {
             )}
           </div>
 
-          {/* Google Map of MM Alam Headquarters */}
+          {/* Map of Bajaur OX Shoes Shop Location */}
           <div className="lg:col-span-7 space-y-4">
             <div className="bg-white p-5 rounded-2xl border border-neutral-200 shadow-sm space-y-3">
               <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
                 <div>
                   <h4 className="font-bold text-sm uppercase text-neutral-950 flex items-center gap-2">
                     <MapPin className="h-4 w-4 text-amber-600" />
-                    MM Alam Road Flagship Location
+                    Bajaur OX Shoes Shop Location
                   </h4>
                   <p className="text-xs text-neutral-500 mt-0.5">
-                    Visit our master workshop in Gulberg III, Lahore
+                    Inayat Killi Bazar, Bypass Road, near Inam Plaza, District Bajaur
                   </p>
                 </div>
-                <Link
-                  href="/stores"
-                  className="text-xs font-bold text-amber-600 hover:text-amber-700 underline"
-                >
-                  View All 5 Stores →
-                </Link>
+                <span className="text-[11px] font-mono bg-neutral-100 text-neutral-700 px-2.5 py-1 rounded-md border border-neutral-200">
+                  QF33+Q6F, Inayat Killi
+                </span>
               </div>
 
               {/* Map Canvas */}
               <div className="w-full">
                 <StoreMap
-                  center={HQ_COORDS}
-                  zoom={15}
+                  center={STORE_COORDS}
+                  zoom={16}
                   height="360px"
                   markers={[
                     {
-                      position: HQ_COORDS,
-                      title: 'OX Shoes MM Alam Flagship Atelier',
-                      address: '12-C/1, MM Alam Road, Gulberg III, Lahore',
-                      phone: '+92 42 35789123',
-                      hours: 'Mon - Sun: 11:00 AM - 11:00 PM',
+                      position: STORE_COORDS,
+                      title: 'Bajaur OX Shoes',
+                      address: 'Inayat Killi Bazar, Bypass Road, near Inam Plaza, District Bajaur',
+                      phone: '+92 300 0914546',
+                      hours: 'Official Retail Shop',
                     },
                   ]}
                 />
               </div>
 
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-2 text-xs text-neutral-600">
-                <span>12-C/1, MM Alam Road, Gulberg III, Lahore</span>
-                <a
-                  href={`https://www.openstreetmap.org/?mlat=${HQ_COORDS[0]}&mlon=${HQ_COORDS[1]}#map=16/${HQ_COORDS[0]}/${HQ_COORDS[1]}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="font-bold text-amber-600 hover:text-amber-700 underline"
-                >
-                  View on OpenStreetMap →
-                </a>
+                <span className="font-mono text-[11px]">GPS: 34.7544498, 71.4530333</span>
+                <div className="flex items-center gap-4">
+                  <a
+                    href="https://www.google.com/maps/search/?api=1&query=34.7544498%2C71.4530333"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-bold text-amber-600 hover:text-amber-700 underline flex items-center gap-1"
+                  >
+                    <span>Open in Google Maps →</span>
+                  </a>
+                  <a
+                    href={`https://www.openstreetmap.org/?mlat=${STORE_COORDS[0]}&mlon=${STORE_COORDS[1]}#map=16/${STORE_COORDS[0]}/${STORE_COORDS[1]}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-bold text-neutral-600 hover:text-neutral-900 underline"
+                  >
+                    OpenStreetMap →
+                  </a>
+                </div>
               </div>
             </div>
           </div>

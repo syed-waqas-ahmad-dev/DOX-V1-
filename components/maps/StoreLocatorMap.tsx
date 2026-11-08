@@ -23,54 +23,14 @@ export interface StoreLocation {
 
 export const OX_STORES: StoreLocation[] = [
   {
-    id: 'store-lhr',
-    name: 'OX Shoes Flagship MM Alam',
-    city: 'Lahore',
-    address: '12-C/1, MM Alam Road, Gulberg III, Lahore, Punjab 54660',
-    phone: '+92 42 35789123',
-    hours: 'Mon - Sun: 11:00 AM - 11:00 PM',
-    features: ['Custom Peshawari Atelier', 'Artisan Foot Pod', 'Express Pickup Hub'],
-    position: [31.5126, 74.3541],
-  },
-  {
-    id: 'store-khi',
-    name: 'OX Shoes Karachi Emporium',
-    city: 'Karachi',
-    address: '4th Commercial Lane, Zamzama Blvd, DHA Phase 5, Karachi, Sindh 75500',
-    phone: '+92 21 35874455',
-    hours: 'Mon - Sun: 12:00 PM - 11:30 PM',
-    features: ['Bridal Khussa Studio', 'Sole Resole Desk', 'VIP Lounge'],
-    position: [24.8238, 67.0341],
-  },
-  {
-    id: 'store-isb',
-    name: 'OX Shoes Islamabad Boutique',
-    city: 'Islamabad',
-    address: 'Shop 18, Block 12-B, F-7 Markaz (Jinnah Super), Islamabad 44000',
-    phone: '+92 51 2651122',
-    hours: 'Mon - Sun: 11:00 AM - 10:30 PM',
-    features: ['Margalla Sneaker Lab', 'Executive Oxford Fitting', 'Free Footwear Spa'],
-    position: [33.7208, 73.0569],
-  },
-  {
-    id: 'store-rwp',
-    name: 'OX Shoes Rawalpindi Heritage',
-    city: 'Rawalpindi',
-    address: 'Haider Road, Saddar Commercial Area, Rawalpindi, Punjab 46000',
-    phone: '+92 51 5567890',
-    hours: 'Mon - Sat: 10:30 AM - 10:00 PM',
-    features: ['Traditional Master Cobblers', 'Double Sole Fitting', 'Leather Polishing'],
-    position: [33.596, 73.0543],
-  },
-  {
-    id: 'store-fsd',
-    name: 'OX Shoes Faisalabad Hub',
-    city: 'Faisalabad',
-    address: 'Main Boulevard, Kohinoor City, Jaranwala Road, Faisalabad, Punjab 38000',
-    phone: '+92 41 8541234',
-    hours: 'Mon - Sun: 11:00 AM - 10:00 PM',
-    features: ['Industrial Leather Craft', 'Full Size Range 39-46', 'Online Order Pickup'],
-    position: [31.4118, 73.1098],
+    id: 'store-bjr',
+    name: 'Bajaur OX Shoes Physical Shop',
+    city: 'Bajaur',
+    address: 'Inayat Killi Bazar, Bypass Road, near Inam Plaza, District Bajaur',
+    phone: '+92 300 0914546',
+    hours: 'Official Retail Store & Workshop',
+    features: ['Handcrafted Peshawari Chappal Atelier', 'Custom Fitting', 'WhatsApp Concierge & Support'],
+    position: [34.7544498, 71.4530333],
   },
 ];
 
@@ -83,7 +43,7 @@ export function StoreLocatorMap() {
       ? OX_STORES
       : OX_STORES.filter((s) => s.city.toLowerCase() === selectedCity.toLowerCase());
 
-  const cities = ['All', 'Lahore', 'Karachi', 'Islamabad', 'Rawalpindi', 'Faisalabad'];
+  const cities = ['All', 'Bajaur'];
 
   const markers: StoreMarker[] = filteredStores.map((store) => ({
     id: store.id,
@@ -213,7 +173,7 @@ export function StoreLocatorMap() {
         <div className="bg-white/90 border border-neutral-200 px-3.5 py-2 rounded-xl shadow-sm text-xs font-semibold text-neutral-800 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Store className="h-4 w-4 text-amber-600" />
-            <span>5 Official Boutiques across Pakistan (OpenStreetMap)</span>
+            <span>Official Physical Shop in Bajaur (OpenStreetMap)</span>
           </div>
           <span className="text-[10px] text-neutral-500 font-mono">100% Free & Open-Source</span>
         </div>

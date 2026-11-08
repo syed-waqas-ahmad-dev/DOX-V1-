@@ -9,7 +9,7 @@
  * Strict TypeScript: ZERO `any`.
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { Logo } from '@/components/layout/Logo';
@@ -28,6 +28,7 @@ import {
 } from '@/types';
 import { formatPKR } from '@/lib/formatters/currency';
 import { formatDate } from '@/lib/formatters/date';
+import { generateCustomerWhatsAppUrl } from '@/lib/whatsapp';
 import {
   Bike,
   Phone,
@@ -81,14 +82,70 @@ export default function RiderTerminalPage() {
   const [submittingAction, setSubmittingAction] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // GPS state
+  // GPS state & Refs
   const [gpsLoading, setGpsLoading] = useState<boolean>(false);
   const [lastGpsUpdate, setLastGpsUpdate] = useState<string | null>(null);
+  const watchIdRef = useRef<number | null>(null);
+  const lastPingTimeRef = useRef<number>(0);
+  const isUpdatingRef = useRef<boolean>(false);
 
   const showToast = (type: 'success' | 'error', text: string) => {
     setToastMessage({ type, text });
     setTimeout(() => setToastMessage(null), 4000);
   };
+
+  // Derived state for GPS tracking activation
+  const activeRiderId = partner?._id ? partner._id.toString() : null;
+  const hasOutForDeliveryAssignment = assignments.some(
+    (a) => a.status === DeliveryAssignmentStatus.OUT_FOR_DELIVERY
+  );
+
+  // Automatic Foreground Rider GPS Tracking Watcher
+  useEffect(() => {
+    if (!activeRiderId || !hasOutForDeliveryAssignment || typeof window === 'undefined' || !navigator.geolocation) {
+      if (watchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+        watchIdRef.current = null;
+      }
+      return;
+    }
+
+    if (watchIdRef.current === null) {
+      watchIdRef.current = navigator.geolocation.watchPosition(
+        async (pos) => {
+          const now = Date.now();
+          if (now - lastPingTimeRef.current < 30000 || isUpdatingRef.current) {
+            return;
+          }
+
+          isUpdatingRef.current = true;
+          try {
+            const { latitude, longitude } = pos.coords;
+            const res = await updateRiderLocation(activeRiderId, latitude, longitude);
+            if (res.success) {
+              lastPingTimeRef.current = Date.now();
+              setLastGpsUpdate(new Date().toLocaleTimeString());
+            }
+          } catch {
+            // Quietly handle connection blips
+          } finally {
+            isUpdatingRef.current = false;
+          }
+        },
+        (err) => {
+          console.warn('[Rider Terminal GPS Watcher]', err.message);
+        },
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 }
+      );
+    }
+
+    return () => {
+      if (watchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+        watchIdRef.current = null;
+      }
+    };
+  }, [activeRiderId, hasOutForDeliveryAssignment]);
 
   // Validate genuine server session on mount
   useEffect(() => {
@@ -194,29 +251,37 @@ export default function RiderTerminalPage() {
     showToast('success', 'Logged out of rider terminal.');
   };
 
-  // Share Live GPS
+  // Manual Backup: Share Live GPS Button
   const handleShareGps = () => {
     if (!partner?._id) return;
     if (!navigator.geolocation) {
       showToast('error', 'Geolocation is not supported by your browser.');
       return;
     }
+    if (isUpdatingRef.current) return;
 
     setGpsLoading(true);
+    isUpdatingRef.current = true;
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
         const { latitude, longitude } = pos.coords;
-        const res = await updateRiderLocation(partner._id.toString(), latitude, longitude);
-        setGpsLoading(false);
-        if (res.success) {
-          setLastGpsUpdate(new Date().toLocaleTimeString());
-          showToast('success', `Live GPS broadcasted to Dispatch Radar! (${latitude.toFixed(4)}, ${longitude.toFixed(4)})`);
-        } else {
-          showToast('error', 'Failed to transmit GPS coordinates.');
+        try {
+          const res = await updateRiderLocation(partner._id.toString(), latitude, longitude);
+          if (res.success) {
+            lastPingTimeRef.current = Date.now();
+            setLastGpsUpdate(new Date().toLocaleTimeString());
+            showToast('success', `Live GPS broadcasted to Dispatch Radar! (${latitude.toFixed(4)}, ${longitude.toFixed(4)})`);
+          } else {
+            showToast('error', 'Failed to transmit GPS coordinates.');
+          }
+        } finally {
+          setGpsLoading(false);
+          isUpdatingRef.current = false;
         }
       },
       (err) => {
         setGpsLoading(false);
+        isUpdatingRef.current = false;
         showToast('error', `Location permission denied: ${err.message}`);
       },
       { enableHighAccuracy: true, timeout: 10000 }
@@ -670,13 +735,10 @@ export default function RiderTerminalPage() {
               </div>
             ) : (
               activeAssignments.map((assignment) => {
-                const cleanPhone = (assignment.customerPhone || '').replace(/\D/g, '');
-                const waPhone = cleanPhone.startsWith('03')
-                  ? '92' + cleanPhone.slice(1)
-                  : cleanPhone || '923001234567';
-                const waUrl = `https://wa.me/${waPhone}?text=${encodeURIComponent(
-                  `Assalam-o-Alaikum ${assignment.customerName}, I am ${partner.name} from OX Shoes. I am delivering your order ${assignment.orderNumber} for PKR ${assignment.codAmount?.toLocaleString()}. Are you available at your address?`
-                )}`;
+                const waUrl = generateCustomerWhatsAppUrl(
+                  assignment.customerPhone,
+                  `Assalam-o-Alaikum ${assignment.customerName}, I am ${partner.name} from Bajaur OX Shoes. I am delivering your order ${assignment.orderNumber} for PKR ${assignment.codAmount?.toLocaleString()}. Are you available at your address?`
+                );
                 const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
                   `${assignment.deliveryAddress}, ${assignment.city}`
                 )}`;
@@ -710,22 +772,45 @@ export default function RiderTerminalPage() {
                       <div className="flex items-center justify-between">
                         <span className="font-bold text-white text-sm">{assignment.customerName}</span>
                         <div className="flex items-center gap-1.5">
-                          <a
-                            href={`tel:${assignment.customerPhone}`}
-                            className="p-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-sky-400 border border-neutral-700"
-                            title="Call Customer"
-                          >
-                            <Phone className="h-3.5 w-3.5" />
-                          </a>
-                          <a
-                            href={waUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="p-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500 text-emerald-400 hover:text-black border border-emerald-500/30 transition-colors"
-                            title="WhatsApp Customer"
-                          >
-                            <Share2 className="h-3.5 w-3.5" />
-                          </a>
+                          {assignment.customerPhone ? (
+                            <a
+                              href={`tel:${assignment.customerPhone}`}
+                              className="p-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-sky-400 border border-neutral-700"
+                              title="Call Customer"
+                            >
+                              <Phone className="h-3.5 w-3.5" />
+                            </a>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled
+                              className="p-1.5 rounded-lg bg-neutral-800/40 text-neutral-600 border border-neutral-800 cursor-not-allowed opacity-40"
+                              title="No phone number provided"
+                            >
+                              <Phone className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                          {waUrl ? (
+                            <a
+                              href={waUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="p-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500 text-emerald-400 hover:text-black border border-emerald-500/30 transition-colors"
+                              title="WhatsApp Customer"
+                            >
+                              <Share2 className="h-3.5 w-3.5" />
+                            </a>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled
+                              className="p-1.5 rounded-lg bg-neutral-800/40 text-neutral-600 border border-neutral-800 cursor-not-allowed opacity-40"
+                              title="No valid customer phone number provided"
+                              aria-label="No valid customer phone number provided"
+                            >
+                              <Share2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
                         </div>
                       </div>
 

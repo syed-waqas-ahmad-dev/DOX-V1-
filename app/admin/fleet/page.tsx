@@ -23,11 +23,40 @@ import {
   RefreshCw,
 } from 'lucide-react';
 
+import { isElevatedAdminRole, verifyDepartmentAuth } from '@/lib/auth-guard';
+import { User } from '@/models/User';
+import { Department, UserRole } from '@/types';
+
 export default async function FleetDispatchPage() {
   const session = await getServerSession(authOptions);
 
-  if (session?.user?.role !== 'super_admin') {
-    redirect('/admin?error=unauthorized');
+  if (!session?.user) {
+    redirect('/login');
+  }
+
+  const role = session.user.role;
+  const isSuperOrAdmin = isElevatedAdminRole(role);
+  let canManagePartners = isSuperOrAdmin;
+  let canDispatchOrders = isSuperOrAdmin;
+
+  if (!isSuperOrAdmin) {
+    if (role === UserRole.MANAGER || role === 'manager') {
+      const auth = await verifyDepartmentAuth({
+        requiredDepartment: Department.DELIVERY,
+        requiredPermission: 'delivery:view',
+      });
+      if (!auth.authorized || !auth.userId) {
+        redirect('/admin?error=unauthorized');
+      }
+
+      await connectToDatabase();
+      const userDoc = await User.findById(auth.userId).select('permissions').lean();
+      const perms = Array.isArray(userDoc?.permissions) ? (userDoc.permissions as string[]) : [];
+      canManagePartners = perms.includes('delivery:partners');
+      canDispatchOrders = perms.includes('delivery:dispatch');
+    } else {
+      redirect('/admin?error=unauthorized');
+    }
   }
 
   await connectToDatabase();
@@ -78,12 +107,14 @@ export default async function FleetDispatchPage() {
             <ArrowLeft className="h-3.5 w-3.5" />
             <span>Admin Console</span>
           </Link>
-          <Link
-            href="/admin/delivery-partners"
-            className="px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-200 transition-colors font-semibold"
-          >
-            Manage Partners
-          </Link>
+          {canManagePartners && (
+            <Link
+              href="/admin/delivery-partners"
+              className="px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-200 transition-colors font-semibold"
+            >
+              Manage Partners
+            </Link>
+          )}
         </div>
       </header>
 
@@ -197,12 +228,18 @@ export default async function FleetDispatchPage() {
                             {formatDate(ord.createdAt)}
                           </td>
                           <td className="py-3 px-4 text-right">
-                            <Link
-                              href={`/admin/orders/${ord._id.toString()}`}
-                              className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-black text-xs font-bold uppercase tracking-wider transition-colors inline-block"
-                            >
-                              Dispatch
-                            </Link>
+                            {canDispatchOrders ? (
+                              <Link
+                                href={`/admin/orders/${ord._id.toString()}`}
+                                className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-black text-xs font-bold uppercase tracking-wider transition-colors inline-block"
+                              >
+                                Dispatch
+                              </Link>
+                            ) : (
+                              <span className="text-neutral-500 text-[11px] italic">
+                                View Only
+                              </span>
+                            )}
                           </td>
                         </tr>
                       );

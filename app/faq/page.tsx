@@ -144,11 +144,11 @@ export default function FAQPage() {
           <div className="space-y-1">
             <h3 className="font-bold text-sm uppercase">Still need assistance?</h3>
             <p className="text-xs text-neutral-300">
-              Our Lahore atelier concierge team is available Mon-Sat, 10 AM to 9 PM PST.
+              Our customer support concierge team is available on WhatsApp.
             </p>
           </div>
           <a
-            href="https://wa.me/923001234567"
+            href="https://wa.me/923000914546"
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-all shrink-0"

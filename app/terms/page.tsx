@@ -40,9 +40,9 @@ export default function TermsPage() {
           </section>
 
           <section className="space-y-2">
-            <h2 className="text-sm font-bold uppercase text-neutral-950">2. Pricing, Currencies & FBR Taxes</h2>
+            <h2 className="text-sm font-bold uppercase text-neutral-950">2. Pricing, Currencies & Transparent Billing</h2>
             <p>
-              All prices displayed on oxshoes.pk are in Pakistani Rupees (PKR) and include the mandatory 17% Federal Sales Tax in accordance with FBR documentation. Each purchase generates an official Tax Invoice referencing NTN: 8241920-4.
+              All prices displayed on oxshoes.pk are in Pakistani Rupees (PKR) and include all applicable taxes. Each purchase generates an official order invoice for your records.
             </p>
           </section>
 

@@ -212,6 +212,12 @@ const orderSchema = new Schema<IOrder, OrderModelType>(
       type: String,
       trim: true,
     },
+    verificationToken: {
+      type: String,
+      trim: true,
+      unique: true,
+      sparse: true,
+    },
     archived: {
       type: Boolean,
       default: false,

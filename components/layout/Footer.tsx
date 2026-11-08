@@ -209,7 +209,7 @@ export function Footer() {
             </li>
             <li>
               <Link href="/contact" className="hover:text-white transition-colors">
-                Contact & Headquarters (Lahore)
+                Contact & Location (Bajaur)
               </Link>
             </li>
             <li>

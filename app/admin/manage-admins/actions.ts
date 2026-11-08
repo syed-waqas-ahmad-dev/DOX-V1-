@@ -10,12 +10,14 @@
 
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
+import { verifySuperAdminAuth } from '@/lib/auth-guard';
 import { connectToDatabase, isDatabaseConnected } from '@/lib/db/connect';
 import { User } from '@/models/User';
 import bcrypt from 'bcryptjs';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { CreateAdminSchema, type CreateAdminInput } from '@/lib/validators/manage-admins';
+import { UserRole, Department } from '@/types';
 
 export type { CreateAdminInput } from '@/lib/validators/manage-admins';
 
@@ -26,6 +28,7 @@ export interface AdminUserItem {
   name: string;
   email: string;
   role: string;
+  department?: string | null;
   permissions?: string[];
   createdAt?: string;
 }
@@ -41,13 +44,11 @@ export async function getAdminsList(): Promise<{
   error?: string;
 }> {
   try {
-    const session = await getServerSession(authOptions);
-    const sessionRole = (session?.user as { role?: string } | undefined)?.role;
-
-    if (sessionRole !== 'super_admin') {
+    const auth = await verifySuperAdminAuth();
+    if (!auth.authorized) {
       return {
         success: false,
-        error: 'Access Denied: Only super_admin can view the admins list.',
+        error: auth.error || 'Access Denied: Only super_admin can view the admins list.',
       };
     }
 
@@ -60,13 +61,13 @@ export async function getAdminsList(): Promise<{
       };
     }
 
-    // Query both admin and super_admin accounts strictly using string literals
-    const adminRoles = ['admin', 'super_admin'] as unknown as never[];
+    // Query admin, super_admin, and manager accounts
+    const adminRoles = [UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.MANAGER];
     const admins = await User.find({
       role: { $in: adminRoles },
       isDeleted: { $ne: true },
     })
-      .select('name email role permissions createdAt')
+      .select('name email role department permissions createdAt')
       .sort({ createdAt: -1 })
       .lean();
 
@@ -76,6 +77,7 @@ export async function getAdminsList(): Promise<{
         name?: string;
         email?: string;
         role?: string;
+        department?: string | null;
         permissions?: string[];
         createdAt?: Date;
       }>
@@ -84,6 +86,7 @@ export async function getAdminsList(): Promise<{
       name: u.name || 'Admin User',
       email: u.email || '',
       role: u.role || 'admin',
+      department: u.department || null,
       permissions: Array.isArray(u.permissions) ? u.permissions : [],
       createdAt: u.createdAt ? new Date(u.createdAt).toISOString() : undefined,
     }));
@@ -108,22 +111,21 @@ export async function getAdminsList(): Promise<{
  * Validations:
  * 1. Checks if email already exists -> returns error: 'Admin already exists'
  * 2. Hashes password with bcrypt before saving to DB
- * 3. Sets role to 'admin' strictly (No Manager/Editor roles)
- * 4. Logs audit entry: console.log('AUDIT:', ...)
+ * 3. Sets role to 'admin' or 'manager' according to input.
+ * 4. Assigns department for 'manager' roles.
+ * 5. Logs audit entry: console.log('AUDIT:', ...)
  * Strict TypeScript: ZERO `any`. No fetch(), no UserRole enum.
  */
 export async function createAdmin(
   data: CreateAdminInput
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    // 1. Access Control: Check session role === 'super_admin'
-    const session = await getServerSession(authOptions);
-    const sessionRole = (session?.user as { role?: string } | undefined)?.role;
-
-    if (sessionRole !== 'super_admin') {
+    // 1. Access Control: Live check for super_admin clearance
+    const auth = await verifySuperAdminAuth();
+    if (!auth.authorized) {
       return {
         success: false,
-        error: 'Unauthorized: Only super_admin can create admin accounts.',
+        error: auth.error || 'Unauthorized: Only super_admin can create admin accounts.',
       };
     }
 
@@ -136,7 +138,16 @@ export async function createAdmin(
         error: firstIssue ? firstIssue.message : 'Invalid admin account details.',
       };
     }
-    const { name, email, password, permissions } = parsedResult.data;
+    const { name, email, password, role, department, permissions } = parsedResult.data;
+
+    // 2.5 Security: Prevent non-super_admin from assigning privileged roles or promoting themselves.
+    // (Already checked sessionRole === 'super_admin' above, but good to be explicit about target role)
+    if (role === UserRole.SUPER_ADMIN) {
+      return {
+        success: false,
+        error: 'Unauthorized: Cannot create additional super_admin accounts via this interface.',
+      };
+    }
 
     await connectToDatabase();
 
@@ -164,12 +175,13 @@ export async function createAdmin(
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
-    // 5. Set role to 'admin' strictly (No Manager/Editor roles)
+    // 5. Set role and department according to input (Strictly validated by Zod)
     const newAdmin = await User.create({
       name: name.trim(),
       email: normalizedEmail,
       password: hashedPassword,
-      role: 'admin' as unknown as never,
+      role: role,
+      department: role === UserRole.MANAGER ? department : null,
       permissions: permissions,
     });
 
@@ -178,10 +190,10 @@ export async function createAdmin(
       'AUDIT:',
       JSON.stringify({
         action: 'CREATE_ADMIN',
-        performedBy: session?.user?.email || 'super_admin',
+        performedBy: auth.userId || 'super_admin',
         targetAdminId: String(newAdmin._id),
         targetAdminEmail: normalizedEmail,
-        targetRole: 'admin',
+        targetRole: newAdmin.role || role,
         assignedPermissions: permissions,
         timestamp: new Date().toISOString(),
       })
@@ -233,18 +245,15 @@ export async function deleteAdmin(
   adminId: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    // 1. Access Control: Check session for 'super_admin' role
-    const session = await getServerSession(authOptions);
-    const sessionRole = (session?.user as { role?: string } | undefined)?.role;
-    const sessionUserId = (session?.user as { id?: string } | undefined)?.id;
-    const sessionEmail = session?.user?.email?.toLowerCase().trim();
-
-    if (sessionRole !== 'super_admin') {
+    // 1. Access Control: Live check for super_admin clearance
+    const auth = await verifySuperAdminAuth();
+    if (!auth.authorized) {
       return {
         success: false,
-        error: 'Unauthorized: Only super_admin can delete administrator accounts.',
+        error: auth.error || 'Unauthorized: Only super_admin can delete administrator accounts.',
       };
     }
+    const sessionUserId = auth.userId;
 
     // 2. Validate adminId using Zod
     const parsedResult = DeleteAdminSchema.safeParse(adminId);
@@ -292,11 +301,7 @@ export async function deleteAdmin(
     }
 
     // Prevent administrators from deleting their own account
-    const targetEmail = targetUser.email ? targetUser.email.toLowerCase().trim() : '';
-    if (
-      (sessionUserId && sessionUserId === validAdminId) ||
-      (sessionEmail && sessionEmail === targetEmail)
-    ) {
+    if (sessionUserId && sessionUserId === validAdminId) {
       return {
         success: false,
         error: 'Administrators cannot delete their own account.',
@@ -311,7 +316,7 @@ export async function deleteAdmin(
       'AUDIT:',
       JSON.stringify({
         action: 'DELETE_ADMIN',
-        actorEmail: session?.user?.email || 'super_admin',
+        actorEmail: auth.userId || 'super_admin',
         targetId: validAdminId,
         oldState: { email: targetUser.email },
         timestamp: new Date().toISOString(),

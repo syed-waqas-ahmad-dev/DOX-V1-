@@ -104,14 +104,14 @@ export default function OrderConfirmationPage({ params }: OrderConfirmationProps
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="font-bold text-xs uppercase tracking-wider text-white">
-                  Official FBR Tax Invoice Generated
+                  Order Invoice Generated
                 </h3>
                 <span className="text-[10px] font-mono bg-neutral-800 px-2 py-0.5 rounded text-amber-400 font-bold">
                   INV-{(order.orderNumber || '').replace('OX-', '')}
                 </span>
               </div>
               <p className="text-[11px] text-neutral-400 mt-0.5">
-                Compliant with Sales Tax Act • NTN: 8241920-4 • Download or print anytime.
+                Official order invoice for your records • Download or print anytime.
               </p>
             </div>
           </div>
@@ -120,7 +120,7 @@ export default function OrderConfirmationPage({ params }: OrderConfirmationProps
             className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-black text-xs font-black uppercase tracking-wider transition-transform hover:scale-105 shrink-0 shadow-md"
           >
             <FileText className="h-3.5 w-3.5" />
-            <span>View & Print Tax Invoice</span>
+            <span>View & Print Invoice</span>
           </Link>
         </div>
 

@@ -23,6 +23,16 @@ export enum UserRole {
 }
 
 /**
+ * Department assignments for managerial roles
+ */
+export enum Department {
+  INVENTORY = 'inventory',
+  ORDERS = 'orders',
+  RETURNS = 'returns',
+  DELIVERY = 'delivery',
+}
+
+/**
  * Top-level audience categories for footwear
  */
 export enum ProductCategory {
@@ -305,6 +315,7 @@ export interface IUser {
   googleId?: string;
   image?: string;
   role: UserRole;
+  department?: Department | null;
   permissions?: string[];
   phone: string;
   isPhoneVerified: boolean;
@@ -397,6 +408,7 @@ export interface IOrder {
   riderStatus?: 'pending' | 'assigned' | 'out_for_delivery' | 'delivered' | 'failed';
   lastUpdatedBy?: string;
   deliveryOTP?: string;
+  verificationToken?: string;
   createdAt: Date;
   updatedAt: Date;
 }

@@ -16,8 +16,8 @@ export function WhatsAppWidget() {
 
   const handleOpenWhatsApp = () => {
     const url = generateWhatsAppChatUrl(
-      '+923001234567',
-      'Assalam-o-Alaikum OX Shoes! I need sizing guidance and courier delivery updates.'
+      '+923000914546',
+      'Assalam-o-Alaikum Bajaur OX Shoes! I need sizing guidance and delivery updates.'
     );
     window.open(url, '_blank');
   };
@@ -29,7 +29,7 @@ export function WhatsAppWidget() {
           <div className="flex items-center justify-between pb-2 border-b border-neutral-100">
             <div className="flex items-center gap-2">
               <div className="h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse" />
-              <span className="font-bold text-xs text-neutral-900">OX Shoe Stylist Online</span>
+              <span className="font-bold text-xs text-neutral-900">Bajaur OX Shoes Online</span>
             </div>
             <button
               onClick={() => setIsOpen(false)}
@@ -40,13 +40,13 @@ export function WhatsAppWidget() {
           </div>
 
           <p className="text-xs text-neutral-600 leading-relaxed">
-            Need urgent help with <strong>Peshawari Chappal sizing</strong> or <strong>TCS delivery status</strong>? Chat live with our master craftsmen on WhatsApp.
+            Need urgent help with <strong>Peshawari Chappal sizing</strong> or <strong>courier delivery status</strong>? Chat live with our team on WhatsApp.
           </p>
 
           <a
             href={generateWhatsAppChatUrl(
-              '+923001234567',
-              'Assalam-o-Alaikum OX Shoes! I need sizing guidance and courier delivery updates.'
+              '+923000914546',
+              'Assalam-o-Alaikum Bajaur OX Shoes! I need sizing guidance and delivery updates.'
             )}
             target="_blank"
             rel="noopener noreferrer"

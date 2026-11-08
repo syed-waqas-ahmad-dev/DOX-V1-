@@ -183,7 +183,8 @@ export async function completeReferralInternal(
  */
 export async function cancelReferralInternal(
   referredOrderId: string,
-  session?: mongoose.ClientSession
+  session?: mongoose.ClientSession,
+  actorId?: string
 ): Promise<{ success: boolean; alreadyCancelled?: boolean }> {
   try {
     if (!referredOrderId || typeof referredOrderId !== 'string' || !referredOrderId.trim()) {
@@ -191,6 +192,7 @@ export async function cancelReferralInternal(
     }
 
     const cleanId = referredOrderId.trim();
+    const actorInfo = actorId ? ` (Actor: ${actorId})` : '';
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
@@ -252,7 +254,7 @@ export async function cancelReferralInternal(
           const creditRes = await addCreditInternal(
             referral.referrerId.toString(),
             -actualDeduction,
-            `Referral Cancelled: Clawback PKR ${actualDeduction} for order ${cleanId}${uncollectedDeficit > 0 ? ` (Uncollected spent reward deficit: PKR ${uncollectedDeficit})` : ''}`,
+            `Referral Cancelled: Clawback PKR ${actualDeduction} for order ${cleanId}${actorInfo}${uncollectedDeficit > 0 ? ` (Uncollected spent reward deficit: PKR ${uncollectedDeficit})` : ''}`,
             refCancelReferenceId,
             TransactionStatus.COMPLETED,
             currentSession
@@ -276,7 +278,7 @@ export async function cancelReferralInternal(
                     userId: referral.referrerId,
                     amount: 0,
                     type: 'debit',
-                    description: `Referral Cancelled for order ${cleanId}: PKR ${uncollectedDeficit} uncollected deficit (reward already spent)`,
+                    description: `Referral Cancelled for order ${cleanId}${actorInfo}: PKR ${uncollectedDeficit} uncollected deficit (reward already spent)`,
                     referenceId: refCancelReferenceId,
                     balanceAfter: currentBal,
                     status: TransactionStatus.COMPLETED,

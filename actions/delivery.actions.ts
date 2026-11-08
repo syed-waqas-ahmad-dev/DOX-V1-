@@ -31,9 +31,9 @@ import { handleActionError } from '@/lib/error-handler';
 import mongoose, { Types } from 'mongoose';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { isElevatedAdminRole } from '@/lib/auth-guard';
-import crypto from 'crypto';
 import { cookies } from 'next/headers';
+import { verifyDepartmentAuth, isElevatedAdminRole } from '@/lib/auth-guard';
+import { Department } from '@/types';
 
 declare module '@/types' {
   interface IOrder {
@@ -54,24 +54,35 @@ import {
    ========================================================================== */
 
 /**
- * Private helper to verify elevated administrative clearance (SUPER_ADMIN or ADMIN).
- * Obtains session exclusively from getServerSession(authOptions).
- * MANAGER, RIDER, CUSTOMER, and unauthenticated callers are strictly denied.
+ * Helper to verify administrative clearance for delivery operations.
+ * Allows:
+ *   1. Elevated Admin (SUPER_ADMIN or ADMIN).
+ *   2. MANAGER assigned to the DELIVERY department with required permission.
+ * Strictly denies: unauthenticated callers, customers, riders, or managers from other departments.
  */
-async function verifyDeliveryAdminAuth(): Promise<{
+export async function verifyDeliveryAdminAuth(requiredPermission?: string): Promise<{
   authorized: boolean;
   adminId: string | null;
   adminName: string | null;
 }> {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user || !isElevatedAdminRole((session.user as { role?: string }).role)) {
+    const auth = await verifyDepartmentAuth({
+      requiredDepartment: Department.DELIVERY,
+      requiredPermission: requiredPermission,
+    });
+
+    if (!auth.authorized) {
       return { authorized: false, adminId: null, adminName: null };
     }
+
+    // Retrieve name from session for logging (verifyDepartmentAuth doesn't return name)
+    const session = await getServerSession(authOptions);
+    const adminName = session?.user?.name || session?.user?.email || (auth.role === 'super_admin' ? 'Super Admin' : 'Admin');
+
     return {
       authorized: true,
-      adminId: session.user.id || null,
-      adminName: session.user.name || session.user.email || 'Admin',
+      adminId: auth.userId,
+      adminName: adminName,
     };
   } catch {
     return { authorized: false, adminId: null, adminName: null };
@@ -230,9 +241,9 @@ export async function getAllDeliveryPartners(filters?: {
   search?: string;
 }): Promise<ActionResult<IDeliveryPartner[]>> {
   try {
-    const adminAuth = await verifyDeliveryAdminAuth();
+    const adminAuth = await verifyDeliveryAdminAuth('delivery:view');
     if (!adminAuth.authorized) {
-      return errorResponse('Unauthorized: Administrative clearance required.');
+      return errorResponse('Unauthorized: Administrative clearance with view permission required.');
     }
 
     await connectToDatabase();
@@ -263,9 +274,9 @@ export async function getAllDeliveryPartners(filters?: {
 
 export async function getDeliveryPartnerById(id: string): Promise<ActionResult<IDeliveryPartner | null>> {
   try {
-    const adminAuth = await verifyDeliveryAdminAuth();
+    const adminAuth = await verifyDeliveryAdminAuth('delivery:view');
     if (!adminAuth.authorized) {
-      return errorResponse('Unauthorized: Administrative clearance required.');
+      return errorResponse('Unauthorized: Administrative clearance with view permission required.');
     }
 
     await connectToDatabase();
@@ -286,9 +297,9 @@ export async function createDeliveryPartner(
   input: CreateDeliveryPartnerInput
 ): Promise<ActionResult<IDeliveryPartner>> {
   try {
-    const adminAuth = await verifyDeliveryAdminAuth();
+    const adminAuth = await verifyDeliveryAdminAuth('delivery:partners');
     if (!adminAuth.authorized) {
-      return errorResponse('Unauthorized: Administrative clearance required.');
+      return errorResponse('Unauthorized: Administrative clearance with partner management permission required.');
     }
 
     if (!input.name?.trim() || !input.phone?.trim() || !input.password?.trim()) {
@@ -356,9 +367,24 @@ export async function updateDeliveryPartner(
   input: UpdateDeliveryPartnerInput
 ): Promise<ActionResult<IDeliveryPartner>> {
   try {
-    const adminAuth = await verifyDeliveryAdminAuth();
+    const hasWalletDelta = input.walletDelta !== undefined && input.walletDelta !== null;
+    const hasResetCod = input.resetCod !== undefined && input.resetCod !== null;
+
+    if (hasWalletDelta) {
+      if (typeof input.walletDelta !== 'number' || !Number.isFinite(input.walletDelta)) {
+        return errorResponse('Invalid wallet adjustment amount: Must be a finite number.');
+      }
+    }
+
+    if (hasResetCod && typeof input.resetCod !== 'boolean') {
+      return errorResponse('Invalid reset COD request: Must be a boolean value.');
+    }
+
+    // Financial & COD adjustments require explicit settlement permission for managers; general updates require delivery:partners
+    const requiresSettle = hasWalletDelta || (hasResetCod && input.resetCod === true);
+    const adminAuth = await verifyDeliveryAdminAuth(requiresSettle ? 'delivery:settle' : 'delivery:partners');
     if (!adminAuth.authorized) {
-      return errorResponse('Unauthorized: Administrative clearance required.');
+      return errorResponse('Unauthorized: Administrative clearance' + (requiresSettle ? ' with settlement permission' : ' with partner management permission') + ' required.');
     }
 
     await connectToDatabase();
@@ -387,10 +413,7 @@ export async function updateDeliveryPartner(
     }
 
     // Financial & COD adjustments (strictly gated behind admin verification)
-    if (typeof input.walletDelta === 'number') {
-      if (isNaN(input.walletDelta)) {
-        return errorResponse('Invalid wallet adjustment amount.');
-      }
+    if (hasWalletDelta && typeof input.walletDelta === 'number' && Number.isFinite(input.walletDelta)) {
       partner.walletBalance = Math.max(0, (partner.walletBalance || 0) + input.walletDelta);
       await DeliveryLog.create({
         partnerId: partner._id,
@@ -399,7 +422,7 @@ export async function updateDeliveryPartner(
       });
     }
 
-    if (input.resetCod) {
+    if (hasResetCod && input.resetCod === true) {
       const cleared = partner.codCollectedBalance || 0;
       partner.codCollectedBalance = 0;
       await DeliveryLog.create({
@@ -420,9 +443,9 @@ export async function updateDeliveryPartner(
 
 export async function deleteDeliveryPartner(id: string): Promise<ActionResult<{ success: boolean }>> {
   try {
-    const adminAuth = await verifyDeliveryAdminAuth();
+    const adminAuth = await verifyDeliveryAdminAuth('delivery:partners');
     if (!adminAuth.authorized) {
-      return errorResponse('Unauthorized: Administrative clearance required.');
+      return errorResponse('Unauthorized: Administrative clearance with partner management permission required.');
     }
 
     await connectToDatabase();
@@ -441,9 +464,10 @@ export async function deleteDeliveryPartner(id: string): Promise<ActionResult<{ 
 
 export async function markCodReceivedInOffice(partnerId: string): Promise<ActionResult<{ amountCleared: number }>> {
   try {
-    const adminAuth = await verifyDeliveryAdminAuth();
+    // Financial settlement requires explicit permission for managers
+    const adminAuth = await verifyDeliveryAdminAuth('delivery:settle');
     if (!adminAuth.authorized) {
-      return errorResponse('Unauthorized: Administrative clearance required.');
+      return errorResponse('Unauthorized: Administrative clearance with settlement permission required.');
     }
 
     await connectToDatabase();
@@ -480,9 +504,9 @@ export async function markCodReceivedInOffice(partnerId: string): Promise<Action
 
 export async function getActiveRidersForCity(city: string): Promise<ActionResult<Array<IDeliveryPartner & { distanceKm?: number }>>> {
   try {
-    const adminAuth = await verifyDeliveryAdminAuth();
+    const adminAuth = await verifyDeliveryAdminAuth('delivery:dispatch');
     if (!adminAuth.authorized) {
-      return errorResponse('Unauthorized: Administrative clearance required.');
+      return errorResponse('Unauthorized: Administrative clearance with dispatch permission required.');
     }
 
     await connectToDatabase();
@@ -527,9 +551,9 @@ export async function assignOrderToPartner(
   input: AssignOrderInput
 ): Promise<ActionResult<IDeliveryAssignment>> {
   try {
-    const adminAuth = await verifyDeliveryAdminAuth();
+    const adminAuth = await verifyDeliveryAdminAuth('delivery:dispatch');
     if (!adminAuth.authorized || !adminAuth.adminId) {
-      return errorResponse('Unauthorized: Administrative clearance required.');
+      return errorResponse('Unauthorized: Administrative clearance with dispatch permission required.');
     }
 
     await connectToDatabase();
@@ -642,9 +666,9 @@ export async function reassignOrder(
   adminId?: string
 ): Promise<ActionResult<IDeliveryAssignment>> {
   try {
-    const adminAuth = await verifyDeliveryAdminAuth();
+    const adminAuth = await verifyDeliveryAdminAuth('delivery:dispatch');
     if (!adminAuth.authorized || !adminAuth.adminId) {
-      return errorResponse('Unauthorized: Administrative clearance required.');
+      return errorResponse('Unauthorized: Administrative clearance with dispatch permission required.');
     }
 
     await connectToDatabase();
@@ -702,9 +726,9 @@ export async function reassignOrder(
 
 export async function unassignOrder(assignmentId: string, expectedVersion: number): Promise<ActionResult<{ success: boolean }>> {
   try {
-    const adminAuth = await verifyDeliveryAdminAuth();
+    const adminAuth = await verifyDeliveryAdminAuth('delivery:dispatch');
     if (!adminAuth.authorized || !adminAuth.adminId) {
-      return errorResponse('Unauthorized: Administrative clearance required.');
+      return errorResponse('Unauthorized: Administrative clearance with dispatch permission required.');
     }
 
     await connectToDatabase();
@@ -749,9 +773,9 @@ export async function getAllDeliveryAssignments(filters?: {
   search?: string;
 }): Promise<ActionResult<IDeliveryAssignment[]>> {
   try {
-    const adminAuth = await verifyDeliveryAdminAuth();
+    const adminAuth = await verifyDeliveryAdminAuth('delivery:view');
     if (!adminAuth.authorized) {
-      return errorResponse('Unauthorized: Administrative clearance required.');
+      return errorResponse('Unauthorized: Administrative clearance with view permission required.');
     }
 
     await connectToDatabase();
@@ -801,9 +825,9 @@ export async function getDeliveryDashboardMetrics(): Promise<
   }>
 > {
   try {
-    const adminAuth = await verifyDeliveryAdminAuth();
+    const adminAuth = await verifyDeliveryAdminAuth('delivery:view');
     if (!adminAuth.authorized) {
-      return errorResponse('Unauthorized: Administrative clearance required.');
+      return errorResponse('Unauthorized: Administrative clearance with view permission required.');
     }
 
     await connectToDatabase();
@@ -1048,6 +1072,19 @@ export async function updateRiderAssignmentStatus(
       return errorResponse('Unauthorized: Rider session required.');
     }
 
+    // Fail-closed validation for optional GPS telemetry before database writes or transaction mutations
+    const hasLat = input.lat !== undefined && input.lat !== null;
+    const hasLng = input.lng !== undefined && input.lng !== null;
+    if (hasLat || hasLng) {
+      if (!hasLat || !hasLng) {
+        return errorResponse('Both latitude and longitude must be provided for GPS telemetry.');
+      }
+      const coordValidation = await validateGpsCoordinates(input.lat, input.lng);
+      if (!coordValidation.valid) {
+        return errorResponse(coordValidation.error || 'Invalid GPS coordinates provided.');
+      }
+    }
+
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
@@ -1283,6 +1320,35 @@ export async function updateRiderAssignmentStatus(
 }
 
 /**
+ * Validates GPS latitude and longitude coordinates.
+ * Rejects non-numbers, NaN, positive/negative Infinity,
+ * and values outside standard WGS-84 ranges:
+ * - Latitude: -90 <= lat <= 90
+ * - Longitude: -180 <= lng <= 180
+ */
+export async function validateGpsCoordinates(
+  lat: unknown,
+  lng: unknown
+): Promise<{ valid: boolean; error?: string }> {
+  if (typeof lat !== 'number' || typeof lng !== 'number') {
+    return { valid: false, error: 'Coordinates must be valid numbers.' };
+  }
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return {
+      valid: false,
+      error: 'Coordinates must be finite numbers (NaN and Infinity are not allowed).',
+    };
+  }
+  if (lat < -90 || lat > 90) {
+    return { valid: false, error: 'Latitude out of range: must be between -90 and 90 degrees.' };
+  }
+  if (lng < -180 || lng > 180) {
+    return { valid: false, error: 'Longitude out of range: must be between -180 and 180 degrees.' };
+  }
+  return { valid: true };
+}
+
+/**
  * Updates live GPS coordinates for the authenticated rider.
  */
 export async function updateRiderLocation(
@@ -1301,14 +1367,19 @@ export async function updateRiderLocation(
       return errorResponse('Missing partner ID.');
     }
 
-    if (typeof lat !== 'number' || typeof lng !== 'number' || isNaN(lat) || isNaN(lng)) {
-      return errorResponse('Invalid coordinates provided.');
+    const coordValidation = await validateGpsCoordinates(lat, lng);
+    if (!coordValidation.valid) {
+      return errorResponse(coordValidation.error || 'Invalid coordinates provided.');
     }
 
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
-      MockDb.updateDeliveryPartner(targetPartnerId, { currentLat: lat, currentLng: lng });
+      MockDb.updateDeliveryPartner(targetPartnerId, {
+        currentLat: lat,
+        currentLng: lng,
+        lastLocationUpdate: new Date().toISOString(),
+      });
       return successResponse({ success: true }, 'Location updated.');
     }
 

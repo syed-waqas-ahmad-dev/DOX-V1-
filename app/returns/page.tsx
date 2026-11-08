@@ -245,12 +245,12 @@ export default function ReturnsPage() {
                   Need immediate help with size advice? Chat directly with our master shoe fitters.
                 </p>
                 <a
-                  href="https://wa.me/923001234567"
+                  href="https://wa.me/923000914546"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-block mt-2 text-xs font-bold text-amber-400 hover:text-amber-300 underline"
                 >
-                  Chat on WhatsApp (+92 300 1234567) →
+                  Chat on WhatsApp (+92 300 0914546) →
                 </a>
               </div>
             </div>

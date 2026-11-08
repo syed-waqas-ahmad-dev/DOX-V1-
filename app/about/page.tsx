@@ -6,12 +6,22 @@
  * Strict TypeScript: ZERO `any`.
  */
 
+import type { Metadata } from 'next';
 import { getAboutPageData, getGalleryItems } from '@/app/admin/about/actions';
 import { AboutClientContent } from '@/components/about/AboutClientContent';
 import type { IAboutPage } from '@/models/AboutPage';
 import type { IGalleryItem } from '@/models/GalleryItem';
 
 export const revalidate = 60; // ISR cache revalidation every 60s
+
+export const metadata: Metadata = {
+  title: 'About Us',
+  description:
+    'Discover the legacy of Bajaur OX Shoes — master Pakistani leather craftsmanship, bespoke Peshawari Chappal artisans, and flagship stores across Pakistan.',
+  alternates: {
+    canonical: '/about',
+  },
+};
 
 export default async function AboutPage() {
   const [aboutRes, galleryRes] = await Promise.all([
@@ -39,7 +49,7 @@ export default async function AboutPage() {
       name: 'Dawood Khan',
       description:
         'Master craftsman with over 20 years of bespoke handmade footwear excellence. Leading OX Shoes with dedication to pure Pakistani cobbler heritage.',
-      phone: '+92-300-1234567',
+      phone: '+92 300 0914546',
       imageUrl: 'https://res.cloudinary.com/demo/image/upload/sample.jpg',
     },
     teamCategories: [

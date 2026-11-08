@@ -35,12 +35,76 @@ const CITY_COORDINATES: Record<string, [number, number]> = {
   Quetta: [30.1798, 66.975],
 };
 
-function createRiderIcon(name: string, isPeshawar: boolean) {
+function getGpsFreshnessInfo(partner: IDeliveryPartner): {
+  isFallback: boolean;
+  label: string;
+  badgeClass: string;
+  dotHtml: string;
+} {
+  const hasCoords = typeof partner.currentLat === 'number' && typeof partner.currentLng === 'number';
+  if (!hasCoords) {
+    return {
+      isFallback: true,
+      label: `Approx ${partner.city || 'City'} Location (No GPS)`,
+      badgeClass: 'bg-neutral-200 text-neutral-800 border-neutral-300',
+      dotHtml: '<div style="background-color: #6b7280; width: 12px; height: 12px; border-radius: 9999px; border: 2px solid #ffffff;"></div>',
+    };
+  }
+
+  if (!partner.lastLocationUpdate) {
+    return {
+      isFallback: false,
+      label: 'GPS Synced (Unknown Time)',
+      badgeClass: 'bg-amber-100 text-amber-900 border-amber-300',
+      dotHtml: '<div style="background-color: #f59e0b; width: 12px; height: 12px; border-radius: 9999px; border: 2px solid #ffffff;"></div>',
+    };
+  }
+
+  const lastUpdateMs = new Date(partner.lastLocationUpdate).getTime();
+  if (!Number.isFinite(lastUpdateMs)) {
+    return {
+      isFallback: false,
+      label: 'GPS Time Unavailable',
+      badgeClass: 'bg-amber-100 text-amber-900 border-amber-300',
+      dotHtml: '<div style="background-color: #f59e0b; width: 12px; height: 12px; border-radius: 9999px; border: 2px solid #ffffff;"></div>',
+    };
+  }
+
+  const nowMs = Date.now();
+  const ageMs = Math.max(0, nowMs - lastUpdateMs);
+  const ageMins = Math.floor(ageMs / 60000);
+
+  if (ageMins < 5) {
+    return {
+      isFallback: false,
+      label: `Fresh GPS (${ageMins === 0 ? 'Just now' : `${ageMins}m ago`})`,
+      badgeClass: 'bg-emerald-100 text-emerald-900 border-emerald-300',
+      dotHtml: '<div style="background-color: #10b981; width: 14px; height: 14px; border-radius: 9999px; border: 2.5px solid #ffffff; box-shadow: 0 0 10px rgba(16, 185, 129, 0.9); animation: pulse 1.5s infinite;"></div>',
+    };
+  } else if (ageMins <= 15) {
+    return {
+      isFallback: false,
+      label: `Stale GPS (${ageMins}m ago)`,
+      badgeClass: 'bg-amber-100 text-amber-900 border-amber-300',
+      dotHtml: '<div style="background-color: #f59e0b; width: 12px; height: 12px; border-radius: 9999px; border: 2px solid #ffffff;"></div>',
+    };
+  } else {
+    const hours = Math.floor(ageMins / 60);
+    return {
+      isFallback: false,
+      label: `Old GPS (${hours > 0 ? `${hours}h ago` : `${ageMins}m ago`})`,
+      badgeClass: 'bg-neutral-200 text-neutral-800 border-neutral-300',
+      dotHtml: '<div style="background-color: #6b7280; width: 12px; height: 12px; border-radius: 9999px; border: 2px solid #ffffff;"></div>',
+    };
+  }
+}
+
+function createRiderIcon(name: string, dotHtml: string) {
   return L.divIcon({
     className: 'custom-rider-marker',
     html: `
       <div style="position: relative; display: flex; flex-direction: column; align-items: center; cursor: pointer;">
-        <div style="background-color: #10b981; width: 14px; height: 14px; border-radius: 9999px; border: 2.5px solid #ffffff; box-shadow: 0 0 10px rgba(16, 185, 129, 0.9); animation: pulse 1.5s infinite;"></div>
+        ${dotHtml}
         <div style="margin-top: 3px; background-color: #000000; color: #fbbf24; font-size: 10px; font-weight: 800; padding: 2px 6px; border-radius: 6px; white-space: nowrap; border: 1px solid #374151; box-shadow: 0 2px 6px rgba(0,0,0,0.4);">
           🛵 ${name.split(' ')[0]}
         </div>
@@ -83,18 +147,19 @@ export default function DeliveryPartnersMapInner({
         {partners.map((partner) => {
           const lat = partner.currentLat || CITY_COORDINATES[partner.city]?.[0] || 34.0151;
           const lng = partner.currentLng || CITY_COORDINATES[partner.city]?.[1] || 71.5249;
-          const icon = createRiderIcon(partner.name, partner.city === 'Peshawar');
+          const freshness = getGpsFreshnessInfo(partner);
+          const icon = createRiderIcon(partner.name, freshness.dotHtml);
 
           return (
             <Marker key={partner._id.toString()} position={[lat, lng]} icon={icon}>
               <Popup className="custom-rider-popup">
-                <div className="p-2 space-y-2 text-xs min-w-[210px] text-neutral-900 font-sans">
-                  <div className="flex items-center justify-between border-b pb-1.5">
+                <div className="p-2 space-y-2 text-xs min-w-[220px] text-neutral-900 font-sans">
+                  <div className="flex items-center justify-between border-b pb-1.5 gap-2">
                     <span className="font-bold text-sm text-neutral-950 flex items-center gap-1">
                       🛵 {partner.name}
                     </span>
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
-                      Active
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${freshness.badgeClass}`}>
+                      {freshness.label}
                     </span>
                   </div>
 
@@ -110,6 +175,10 @@ export default function DeliveryPartnersMapInner({
                     <div className="flex justify-between">
                       <span className="text-neutral-500">Area:</span>
                       <span className="font-medium text-neutral-800">{partner.area}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-neutral-500">Location Status:</span>
+                      <span className="font-bold text-neutral-900">{freshness.isFallback ? 'Approx City Centroid' : 'Live Coordinates'}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-neutral-500">Total Deliveries:</span>

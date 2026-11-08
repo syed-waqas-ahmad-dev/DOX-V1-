@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
+import { verifyDepartmentAuth, verifySuperAdminAuth } from '@/lib/auth-guard';
 import { connectToDatabase, isDatabaseConnected } from '@/lib/db/connect';
 import { User } from '@/models/User';
 import { UserRole } from '@/types';
@@ -9,15 +8,11 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
-    const sessionRole = (session?.user as { role?: string } | undefined)?.role;
+    const auth = await verifyDepartmentAuth({ allowElevatedAdmin: true });
 
-    const isAuthorized =
-      sessionRole === UserRole.SUPER_ADMIN || sessionRole === UserRole.ADMIN;
-
-    if (!isAuthorized) {
+    if (!auth.authorized) {
       return NextResponse.json(
-        { success: false, error: 'Access Denied: Administrative privileges required.' },
+        { success: false, error: auth.error || 'Access Denied: Administrative privileges required.' },
         { status: 401 }
       );
     }
@@ -48,13 +43,11 @@ export async function GET(req: NextRequest) {
 
 export async function PATCH(req: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
-    const sessionRole = (session?.user as { role?: string } | undefined)?.role;
+    const auth = await verifyDepartmentAuth({ allowElevatedAdmin: true });
 
-    // Only super_admin or admin can access the endpoint
-    if (sessionRole !== UserRole.SUPER_ADMIN && sessionRole !== UserRole.ADMIN) {
+    if (!auth.authorized) {
       return NextResponse.json(
-        { success: false, error: 'Unauthorized: Administrative access required.' },
+        { success: false, error: auth.error || 'Unauthorized: Administrative access required.' },
         { status: 401 }
       );
     }
@@ -69,12 +62,15 @@ export async function PATCH(req: NextRequest) {
       );
     }
 
-    // Role elevation / modification is strictly restricted to SUPER_ADMIN
-    if (role !== undefined && sessionRole !== UserRole.SUPER_ADMIN) {
-      return NextResponse.json(
-        { success: false, error: 'Forbidden: Only Super Administrators can modify user roles.' },
-        { status: 403 }
-      );
+    // Role elevation / modification is strictly restricted to SUPER_ADMIN (live check)
+    if (role !== undefined) {
+      const superAdminAuth = await verifySuperAdminAuth();
+      if (!superAdminAuth.authorized) {
+        return NextResponse.json(
+          { success: false, error: 'Forbidden: Only Super Administrators can modify user roles.' },
+          { status: 403 }
+        );
+      }
     }
 
     // Prevent assigning invalid roles

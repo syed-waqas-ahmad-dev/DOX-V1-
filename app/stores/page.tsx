@@ -38,15 +38,15 @@ export default function StoresPage() {
           <div className="space-y-3 max-w-2xl">
             <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-neutral-900 text-amber-400 text-xs font-black uppercase tracking-wider">
               <Compass className="h-3.5 w-3.5" />
-              <span>{isUrdu ? 'برانڈ آؤٹ لیٹس' : 'Physical Flagship Boutiques'}</span>
+              <span>{isUrdu ? 'فزیکل اسٹور اور ورکشاپ' : 'Physical Flagship Store & Atelier'}</span>
             </div>
             <h1 className="text-3xl sm:text-4xl lg:text-5xl font-black uppercase tracking-tight text-neutral-950">
-              {isUrdu ? 'ہمارے اسٹورز کا پتہ لگائیں' : 'Locate an OX Shoes Store'}
+              {isUrdu ? 'باجوڑ آکس شوز کا فزیکل اسٹور' : 'Visit Bajaur OX Shoes'}
             </h1>
             <p className="text-xs sm:text-sm text-neutral-600 leading-relaxed">
               {isUrdu
-                ? 'لاہور، کراچی، اسلام آباد، راولپنڈی اور فیصل آباد میں ہمارے دستکاری اسٹوڈیوز تشریف لائیں اور اصلی چمڑے کے جوتے خود آزمائیں۔'
-                : 'Experience traditional master craftsmanship in person. Visit our bespoke ateliers in Lahore, Karachi, Islamabad, Rawalpindi, and Faisalabad for custom fitting, size measurement, and instant pickup.'}
+                ? 'ڈسٹرکٹ باجوڑ میں عنایت کلی بازار، بائی پاس روڈ، انعام پلازہ کے قریب ہمارے اسٹور پر تشریف لائیں اور روایتی دستکاری جوتے خود آزمائیں۔ پورے پاکستان میں کیش آن ڈیلیوری کی سہولت بھی دستیاب ہے۔'
+                : 'Experience traditional master craftsmanship in person. Visit our physical shop in Inayat Killi Bazar, Bypass Road, near Inam Plaza, District Bajaur for custom fitting, size measurement, and bespoke craft. We also deliver nationwide across Pakistan with Cash on Delivery (COD).'}
             </p>
           </div>
 
@@ -59,7 +59,7 @@ export default function StoresPage() {
               <span>Shop Online</span>
             </Link>
             <a
-              href="https://wa.me/923001234567"
+              href="https://wa.me/923000914546"
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-300 hover:bg-emerald-100 text-xs font-bold transition-all"
@@ -78,7 +78,7 @@ export default function StoresPage() {
         {/* In-Store VIP Services Grid */}
         <section className="pt-6 border-t border-neutral-200">
           <h2 className="text-xl font-black uppercase tracking-tight text-neutral-950 mb-6 text-center">
-            Complimentary Services at Every OX Shoes Boutique
+            Complimentary Services at Our Bajaur Store
           </h2>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -108,7 +108,7 @@ export default function StoresPage() {
               </div>
               <h3 className="font-bold text-xs uppercase text-neutral-950">1-Hour Click & Collect</h3>
               <p className="text-[11px] text-neutral-600 leading-relaxed">
-                Order online and collect your packaged shoes from your nearest boutique within 60 minutes.
+                Order online and collect your packaged shoes from our Bajaur shop or receive via nationwide courier.
               </p>
             </div>
 

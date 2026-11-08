@@ -16,20 +16,17 @@ import { Types } from 'mongoose';
 import { revalidatePath } from 'next/cache';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { isElevatedAdminRole } from '@/lib/auth-guard';
+import { isElevatedAdminRole, verifyDepartmentAuth } from '@/lib/auth-guard';
 
 /**
  * Private helper to verify that the caller has elevated administrative clearance (SUPER_ADMIN or ADMIN).
- * Obtains session exclusively from getServerSession(authOptions).
+ * Verifies caller against live database user status (checking isDeleted / account deactivation).
  * MANAGER, RIDER, CUSTOMER, and unauthenticated callers are strictly denied.
  */
 async function verifyBannerAdminAuth(): Promise<boolean> {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user || !isElevatedAdminRole((session.user as { role?: string }).role)) {
-      return false;
-    }
-    return true;
+    const auth = await verifyDepartmentAuth({ allowElevatedAdmin: true });
+    return auth.authorized;
   } catch {
     return false;
   }

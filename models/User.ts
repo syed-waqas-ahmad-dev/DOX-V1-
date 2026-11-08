@@ -8,7 +8,7 @@
 
 import { Schema, model, models, type Model, type HydratedDocument, type Query } from 'mongoose';
 import bcrypt from 'bcryptjs';
-import { UserRole, type IUser, type IAddress } from '@/types';
+import { UserRole, Department, type IUser, type IAddress } from '@/types';
 
 /**
  * Subdocument schema for customer delivery addresses
@@ -112,6 +112,15 @@ const userSchema = new Schema<IUser, UserModelType, IUserMethods>(
         message: '{VALUE} is not a valid user role',
       },
       default: UserRole.CUSTOMER,
+    },
+    department: {
+      type: String,
+      enum: {
+        values: [...Object.values(Department), null],
+        message: '{VALUE} is not a valid department assignment',
+      },
+      default: null,
+      required: false,
     },
     permissions: {
       type: [String],

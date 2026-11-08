@@ -54,7 +54,7 @@ export function AboutClientContent({ initialAbout, initialGallery }: AboutClient
     name: 'Dawood Khan',
     description:
       'Master craftsman with over 20 years of bespoke handmade footwear excellence. Leading OX Shoes with dedication to pure Pakistani cobbler heritage.',
-    phone: '+92-300-1234567',
+    phone: '+92 300 0914546',
     imageUrl: 'https://res.cloudinary.com/demo/image/upload/sample.jpg',
   };
 
@@ -175,16 +175,18 @@ export function AboutClientContent({ initialAbout, initialGallery }: AboutClient
 
               <div className="mt-8 pt-6 border-t border-neutral-800 flex items-center justify-between">
                 <div className="flex items-center gap-3 text-neutral-300">
-                  <div className="w-10 h-10 rounded-xl bg-neutral-800 flex items-center justify-center text-amber-500">
+                  <div className="w-10 h-10 rounded-xl bg-neutral-800 flex items-center justify-center text-emerald-400">
                     <Phone className="w-5 h-5" />
                   </div>
                   <div>
-                    <p className="text-xs text-neutral-400 uppercase tracking-wider">Direct Atelier Contact</p>
+                    <p className="text-xs text-neutral-400 uppercase tracking-wider">Official Store WhatsApp</p>
                     <a
-                      href={`tel:${manager.phone}`}
-                      className="text-sm font-bold text-amber-500 hover:text-amber-400 transition"
+                      href="https://wa.me/923000914546"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm font-bold text-emerald-400 hover:text-emerald-300 transition"
                     >
-                      {manager.phone}
+                      +92 300 0914546
                     </a>
                   </div>
                 </div>
@@ -293,9 +295,12 @@ export function AboutClientContent({ initialAbout, initialGallery }: AboutClient
                 <div className="flex items-start gap-3">
                   <MapPin className="w-6 h-6 text-amber-500 flex-shrink-0 mt-1" />
                   <div>
-                    <h3 className="text-lg font-bold text-white mb-1">OX Shoes Shop Flagship Store</h3>
+                    <h3 className="text-lg font-bold text-white mb-1">Bajaur OX Shoes Shop</h3>
                     <p className="text-gray-300 text-sm leading-relaxed">
-                      OX Shoes Shop, QF33+Q6F, Inayat Killi, Bajaur, KPK
+                      Inayat Killi Bazar, Bypass Road, near Inam Plaza, District Bajaur
+                    </p>
+                    <p className="text-gray-400 text-xs font-mono mt-1">
+                      Plus Code: QF33+Q6F, Inayat Killi
                     </p>
                   </div>
                 </div>
@@ -304,7 +309,7 @@ export function AboutClientContent({ initialAbout, initialGallery }: AboutClient
                     Lat: 34.7544498, Lng: 71.4530333
                   </p>
                   <a
-                    href="https://www.google.com/maps/search/?api=1&query=34.7544498,71.4530333"
+                    href="https://www.google.com/maps/search/?api=1&query=34.7544498%2C71.4530333"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="mt-4 inline-flex items-center gap-1.5 text-amber-500 hover:text-amber-400 underline font-semibold text-sm transition-colors"

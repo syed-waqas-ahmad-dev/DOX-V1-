@@ -54,9 +54,9 @@ export default function PrivacyPage() {
           </section>
 
           <section className="space-y-2">
-            <h2 className="text-sm font-bold uppercase text-neutral-950">4. Official Tax Records (FBR Compliance)</h2>
+            <h2 className="text-sm font-bold uppercase text-neutral-950">4. Accounting & Invoice Records</h2>
             <p>
-              In compliance with Federal Board of Revenue (FBR) Sales Tax Act requirements, electronic tax invoice records (NTN: 8241920-4) are maintained securely in our ERP accounting archive.
+              In accordance with commercial accounting practices, electronic order and invoice records are maintained securely in our business accounting archive.
             </p>
           </section>
 
@@ -64,7 +64,7 @@ export default function PrivacyPage() {
             <h2 className="text-sm font-bold uppercase text-neutral-950">5. Contact Our Data Protection Officer</h2>
             <p>
               For privacy inquiries or account deletion requests, email{' '}
-              <strong className="text-neutral-950">privacy@oxshoes.pk</strong> or visit our Lahore atelier at 12-C/1, MM Alam Road, Gulberg III.
+              <strong className="text-neutral-950">privacy@oxshoes.pk</strong> or visit our shop at Inayat Killi Bazar, Bypass Road, near Inam Plaza, District Bajaur.
             </p>
           </section>
         </div>

@@ -239,7 +239,7 @@ export default function CheckoutPage() {
                   </label>
                   <input
                     type="text"
-                    placeholder="+923001234567"
+                    placeholder="03XX-XXXXXXX"
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
                     required

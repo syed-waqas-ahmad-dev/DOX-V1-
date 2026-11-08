@@ -5,8 +5,64 @@
  * Strict TypeScript: ZERO `any`.
  */
 
+import crypto from 'crypto';
 import { type IOrder, PaymentStatus, PaymentMethod } from '@/types';
 import { GST_RATE } from '@/lib/constants';
+
+/**
+ * Returns the canonical base URL for the application from environment variables.
+ * Order of evaluation: APP_URL -> NEXT_PUBLIC_APP_URL -> NEXTAUTH_URL.
+ * In production, strictly requires a valid HTTPS URL.
+ */
+export function getAppBaseUrl(): string {
+  const envUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || process.env.NEXTAUTH_URL;
+  const isProd = process.env.NODE_ENV === 'production';
+
+  if (!envUrl || !envUrl.trim()) {
+    if (isProd) {
+      throw new Error('[CONFIGURATION ERROR] APP_URL environment variable is required in production.');
+    }
+    return 'http://localhost:3000';
+  }
+
+  let trimmedUrl = envUrl.trim().replace(/\/+$/, '');
+  if (!trimmedUrl.startsWith('http://') && !trimmedUrl.startsWith('https://')) {
+    trimmedUrl = `https://${trimmedUrl}`;
+  }
+
+  try {
+    const parsed = new URL(trimmedUrl);
+    if (isProd && parsed.protocol !== 'https:') {
+      throw new Error('[CONFIGURATION ERROR] Production APP_URL must use HTTPS protocol.');
+    }
+    return parsed.origin;
+  } catch (err) {
+    if (isProd) {
+      throw new Error(`[CONFIGURATION ERROR] Invalid APP_URL format: ${envUrl}`);
+    }
+    return 'http://localhost:3000';
+  }
+}
+
+/**
+ * Generates a new cryptographically secure 64-character hex verification token.
+ */
+export function generateVerificationToken(): string {
+  return crypto.randomBytes(32).toString('hex');
+}
+
+/**
+ * Returns the persisted verification token for an order.
+ * Strictly requires a persisted random token; no deterministic fallback.
+ */
+export function getInvoiceVerificationToken(order: {
+  verificationToken?: string;
+}): string {
+  if (order.verificationToken && order.verificationToken.trim()) {
+    return order.verificationToken.trim();
+  }
+  return '';
+}
 
 export interface InvoiceData {
   invoiceNumber: string;
@@ -16,9 +72,9 @@ export interface InvoiceData {
   seller: {
     legalName: string;
     brandName: string;
-    ntn: string; // National Tax Number (Pakistani FBR)
-    strn: string; // Sales Tax Registration Number
-    posRegistrationNo: string;
+    ntn?: string; // Optional National Tax Number
+    strn?: string; // Optional Sales Tax Registration Number
+    posRegistrationNo?: string;
     address: string;
     city: string;
     country: string;
@@ -63,7 +119,7 @@ export interface InvoiceData {
   };
   verification: {
     qrCodeData: string;
-    fbrInvoiceNumber: string;
+    fbrInvoiceNumber?: string;
   };
 }
 
@@ -107,9 +163,10 @@ export function generateInvoiceData(order: IOrder): InvoiceData {
 
   const tracking = order.trackingNumber || `TCS-${Math.floor(10000000 + Math.random() * 90000000)}`;
 
-  // Verification URL for QR code
-  const qrCodeData = `https://oxshoes.pk/invoice/${order._id}?inv=${invoiceNumber}&ntn=8241920-4&amt=${order.totalAmount}`;
-  const fbrInvoiceNumber = `FBR-${orderNumClean}-${Math.floor(1000 + Math.random() * 9000)}`;
+  // Public verification URL for QR code (no PII, secure token)
+  const baseUrl = getAppBaseUrl();
+  const token = getInvoiceVerificationToken(order);
+  const qrCodeData = `${baseUrl}/verify-invoice/${token}`;
 
   // Handle both address and street property
   const shipAddr = order.shippingAddress as unknown as Record<string, string> | undefined;
@@ -122,14 +179,11 @@ export function generateInvoiceData(order: IOrder): InvoiceData {
     dueDate,
     seller: {
       legalName: 'OX Shoes Footwear Pakistan (Pvt.) Ltd.',
-      brandName: 'OX Shoes Pakistan',
-      ntn: '8241920-4',
-      strn: '3277876123456',
-      posRegistrationNo: 'OX-POS-77492-LHR',
-      address: '12-C/1, MM Alam Road, Gulberg III',
-      city: 'Lahore, Punjab',
+      brandName: 'Bajaur OX Shoes',
+      address: 'Inayat Killi Bazar, Bypass Road, near Inam Plaza',
+      city: 'District Bajaur',
       country: 'Pakistan',
-      helpline: '+92 42 35789123 / +92 300 1234567',
+      helpline: '+92 300 0914546 (WhatsApp)',
       email: 'billing@oxshoes.pk',
     },
     customer: {
@@ -159,7 +213,6 @@ export function generateInvoiceData(order: IOrder): InvoiceData {
     },
     verification: {
       qrCodeData,
-      fbrInvoiceNumber,
     },
   };
 }

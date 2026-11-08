@@ -122,12 +122,6 @@ export function Header({ onOpenSearch }: HeaderProps) {
                 {currentIsUrdu ? link.labelUr : link.label}
               </Link>
             ))}
-            <Link
-              href="/about"
-              className="transition-colors py-2 relative hover:text-neutral-950 text-neutral-700 hover:text-black"
-            >
-              {currentIsUrdu ? 'ہمارے بارے میں' : 'About Us'}
-            </Link>
           </nav>
 
           {/* Right Action Icons & Mobile Menu Button (shifted to right side) */}
@@ -288,14 +282,14 @@ export function Header({ onOpenSearch }: HeaderProps) {
                       </Link>
                     )}
 
-                    {/* Rider Terminal (RBAC): If role === 'rider', show a 'Rider Terminal' link that uses window.open('/rider', '_blank') */}
+                    {/* Rider Terminal (RBAC): If role === 'rider', show a 'Rider Terminal' link that uses window.open('/delivery', '_blank') */}
                     {session?.user?.role === 'rider' && (
                       <button
                         type="button"
                         onClick={() => {
                           setProfileDropdownOpen(false);
                           if (typeof window !== 'undefined') {
-                            window.open('/rider', '_blank');
+                            window.open('/delivery', '_blank');
                           }
                         }}
                         className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-emerald-50 text-emerald-700 font-semibold transition-colors cursor-pointer text-left"
@@ -525,13 +519,6 @@ export function Header({ onOpenSearch }: HeaderProps) {
                 {currentIsUrdu ? link.labelUr : link.label}
               </Link>
             ))}
-            <Link
-              href="/about"
-              onClick={() => setMobileMenuOpen(false)}
-              className="py-2 px-2 rounded-lg text-sm font-semibold transition-colors text-neutral-800 hover:bg-neutral-50"
-            >
-              {currentIsUrdu ? 'ہمارے بارے میں' : 'About Us'}
-            </Link>
           </div>
 
           {/* Auxiliary Links */}

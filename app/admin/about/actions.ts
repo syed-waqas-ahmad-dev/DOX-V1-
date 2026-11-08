@@ -15,6 +15,7 @@ import { connectToDatabase } from '@/lib/db/connect';
 import { AboutPage, type IAboutPage, type IAboutHeroImage, type IAboutTeamCategory } from '@/models/AboutPage';
 import { GalleryItem, type IGalleryItem, type GalleryMediaType } from '@/models/GalleryItem';
 import { revalidatePath } from 'next/cache';
+import mongoose from 'mongoose';
 
 // Initialize Cloudinary v2 SDK
 cloudinary.config({
@@ -28,27 +29,52 @@ const MAX_IMAGE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
 const MAX_VIDEO_SIZE_BYTES = 100 * 1024 * 1024; // 100MB
 
 /**
+ * Helper to validate if a string is a valid 24-char hex MongoDB ObjectId
+ */
+function isValidObjectId(id: string | null | undefined): boolean {
+  if (!id || typeof id !== 'string') return false;
+  return /^[0-9a-fA-F]{24}$/.test(id.trim());
+}
+
+/**
  * Helper to upload buffer directly to Cloudinary without disk persistence.
+ * Strictly streams media to Cloudinary and returns hosted asset URLs.
+ * Throws controlled errors if Cloudinary credentials are missing or API upload fails.
  */
 async function uploadBufferToCloudinary(
   buffer: Buffer,
   folder: 'dawood-ox/about' | 'dawood-ox/gallery',
-  resourceType: 'auto' | 'image' | 'video' = 'auto'
+  resourceType: 'auto' | 'image' | 'video' = 'auto',
+  mimeType: string = 'image/jpeg'
 ): Promise<{ secure_url: string; public_id: string }> {
-  return new Promise((resolve, reject) => {
+  const cloudName = process.env.CLOUDINARY_CLOUD_NAME?.trim();
+  const apiKey = process.env.CLOUDINARY_API_KEY?.trim();
+  const apiSecret = process.env.CLOUDINARY_API_SECRET?.trim();
+
+  if (!cloudName || !apiKey || !apiSecret) {
+    throw new Error(
+      'Cloudinary API configuration is missing. Please ensure CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET environment variables are set.'
+    );
+  }
+
+  return new Promise<{ secure_url: string; public_id: string }>((resolve, reject) => {
     const uploadStream = cloudinary.uploader.upload_stream(
       {
         folder,
         resource_type: resourceType,
       },
-      (error, result) => {
-        if (error || !result) {
-          reject(error || new Error('Cloudinary upload returned empty response'));
+      (error, res) => {
+        if (error || !res) {
+          reject(
+            new Error(
+              `Cloudinary upload failed: ${error?.message || 'Empty response received from Cloudinary API'}`
+            )
+          );
           return;
         }
         resolve({
-          secure_url: result.secure_url,
-          public_id: result.public_id,
+          secure_url: res.secure_url,
+          public_id: res.public_id,
         });
       }
     );
@@ -198,8 +224,8 @@ export async function updateAboutPage(formData: FormData): Promise<{
 
     // Handle optional manager image upload
     const managerImageFile = formData.get('managerImage') as File | null;
-    let managerImageUrl = aboutDoc.manager.imageUrl;
-    let managerPublicId = aboutDoc.manager.publicId;
+    let managerImageUrl = aboutDoc.manager?.imageUrl || DEFAULT_ABOUT_PAGE.manager!.imageUrl;
+    let managerPublicId = aboutDoc.manager?.publicId;
 
     if (managerImageFile && managerImageFile.size > 0) {
       if (managerImageFile.size > MAX_IMAGE_SIZE_BYTES) {
@@ -210,7 +236,12 @@ export async function updateAboutPage(formData: FormData): Promise<{
       }
 
       const buffer = Buffer.from(await managerImageFile.arrayBuffer());
-      const uploadResult = await uploadBufferToCloudinary(buffer, 'dawood-ox/about', 'image');
+      const uploadResult = await uploadBufferToCloudinary(
+        buffer,
+        'dawood-ox/about',
+        'image',
+        managerImageFile.type || 'image/jpeg'
+      );
       managerImageUrl = uploadResult.secure_url;
       managerPublicId = uploadResult.public_id;
     }
@@ -238,21 +269,36 @@ export async function updateAboutPage(formData: FormData): Promise<{
     if (heroImage0 && heroImage0.size > 0) {
       if (heroImage0.size > MAX_IMAGE_SIZE_BYTES) throw new Error('Hero image 1 exceeds 10MB.');
       const buffer = Buffer.from(await heroImage0.arrayBuffer());
-      const res = await uploadBufferToCloudinary(buffer, 'dawood-ox/about', 'image');
+      const res = await uploadBufferToCloudinary(
+        buffer,
+        'dawood-ox/about',
+        'image',
+        heroImage0.type || 'image/jpeg'
+      );
       newHeroList[0] = { url: res.secure_url, alt: heroAlt0, publicId: res.public_id };
     }
 
     if (heroImage1 && heroImage1.size > 0) {
       if (heroImage1.size > MAX_IMAGE_SIZE_BYTES) throw new Error('Hero interior image 1 exceeds 10MB.');
       const buffer = Buffer.from(await heroImage1.arrayBuffer());
-      const res = await uploadBufferToCloudinary(buffer, 'dawood-ox/about', 'image');
+      const res = await uploadBufferToCloudinary(
+        buffer,
+        'dawood-ox/about',
+        'image',
+        heroImage1.type || 'image/jpeg'
+      );
       newHeroList[1] = { url: res.secure_url, alt: heroAlt1, publicId: res.public_id };
     }
 
     if (heroImage2 && heroImage2.size > 0) {
       if (heroImage2.size > MAX_IMAGE_SIZE_BYTES) throw new Error('Hero interior image 2 exceeds 10MB.');
       const buffer = Buffer.from(await heroImage2.arrayBuffer());
-      const res = await uploadBufferToCloudinary(buffer, 'dawood-ox/about', 'image');
+      const res = await uploadBufferToCloudinary(
+        buffer,
+        'dawood-ox/about',
+        'image',
+        heroImage2.type || 'image/jpeg'
+      );
       newHeroList[2] = { url: res.secure_url, alt: heroAlt2, publicId: res.public_id };
     }
 
@@ -265,8 +311,10 @@ export async function updateAboutPage(formData: FormData): Promise<{
     };
     aboutDoc.heroImages = newHeroList;
     aboutDoc.teamCategories = teamCategories;
-    if (userId) {
+    if (isValidObjectId(userId)) {
       aboutDoc.lastUpdatedBy = userId as unknown as IAboutPage['lastUpdatedBy'];
+    } else {
+      aboutDoc.lastUpdatedBy = null;
     }
 
     await aboutDoc.save();
@@ -280,6 +328,7 @@ export async function updateAboutPage(formData: FormData): Promise<{
     };
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Failed to update About Page';
+    console.error('[updateAboutPage Error]:', error);
     return { success: false, error: message };
   }
 }
@@ -356,8 +405,11 @@ export async function addGalleryItem(formData: FormData): Promise<{
     const uploadResult = await uploadBufferToCloudinary(
       buffer,
       'dawood-ox/gallery',
-      type === 'video' ? 'video' : 'image'
+      type === 'video' ? 'video' : 'image',
+      mime || (type === 'video' ? 'video/mp4' : 'image/jpeg')
     );
+
+    const validUserId = isValidObjectId(userId) ? userId : null;
 
     const newItem = await GalleryItem.create({
       url: uploadResult.secure_url,
@@ -365,7 +417,7 @@ export async function addGalleryItem(formData: FormData): Promise<{
       title,
       description,
       publicId: uploadResult.public_id,
-      createdBy: userId || null,
+      createdBy: validUserId,
     });
 
     revalidatePath('/about');
@@ -377,6 +429,7 @@ export async function addGalleryItem(formData: FormData): Promise<{
     };
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Failed to add gallery item';
+    console.error('[addGalleryItem Error]:', error);
     return { success: false, error: message };
   }
 }
@@ -398,7 +451,11 @@ export async function deleteGalleryItem(id: string): Promise<{
       return { success: false, error: 'Gallery item not found.' };
     }
 
-    if (item.publicId) {
+    const cloudName = process.env.CLOUDINARY_CLOUD_NAME?.trim();
+    const apiKey = process.env.CLOUDINARY_API_KEY?.trim();
+    const apiSecret = process.env.CLOUDINARY_API_SECRET?.trim();
+
+    if (item.publicId && cloudName && apiKey && apiSecret && !item.publicId.startsWith('ox_')) {
       try {
         await cloudinary.uploader.destroy(item.publicId, {
           resource_type: item.type === 'video' ? 'video' : 'image',

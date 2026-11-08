@@ -224,7 +224,7 @@ export default function AdminDashboardClient({
     MONGODB_DB_NAME: 'shoes_app_db',
     NEXTAUTH_SECRET: '',
     NEXTAUTH_URL: 'http://localhost:3000',
-    NEXT_PUBLIC_APP_URL: 'https://ox-shoes-inayat.vercel.app',
+    NEXT_PUBLIC_APP_URL: 'https://oxshoes.pk',
     ADMIN_ACCESS_KEY: '',
     CRON_SECRET: '',
     CLOUDINARY_CLOUD_NAME: '',

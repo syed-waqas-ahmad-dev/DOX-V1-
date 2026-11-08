@@ -41,8 +41,8 @@ export const metadata: Metadata = {
   },
   icons: {
     icon: [
-      { url: '/favicon.ico' },
       { url: '/icon.jpg', type: 'image/jpeg' },
+      { url: '/images/ox-shoes-logo.jpg', type: 'image/jpeg' },
     ],
     apple: '/icon.jpg',
   },

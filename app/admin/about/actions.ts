@@ -85,7 +85,8 @@ async function uploadBufferToCloudinary(
             (typeof headers['x-cld-error'] === 'string' ? headers['x-cld-error'] : undefined);
 
           // SECURE SERVER-SIDE DIAGNOSTIC LOGGING
-          // Strictly excludes secrets, credentials, tokens, and buffer contents.
+          // Note: SDK source node_modules/cloudinary/lib/uploader.js line 479 parses JSON error bodies only for [200, 400, 401, 404, 420, 429, 500].
+          // Status 403 bypasses body parsing in the SDK and returns name: "UnexpectedResponse", discarding res.headers & res.body.
           console.error('[Cloudinary SDK Error Diagnostic]:', {
             message: rawMessage,
             http_code: httpCode,
@@ -134,6 +135,69 @@ async function requireSuperAdminSession(): Promise<string> {
     throw new Error('Access denied. Only Super Admin can modify the About page and Gallery.');
   }
   return session.user.id || '';
+}
+
+/**
+ * Isolated, read-only diagnostic action (Super Admin only).
+ * Executes a 100% read-only Cloudinary Admin API ping (`cloudinary.api.ping()`).
+ * Distinguishes general API authentication failure from upload-specific stream rejection.
+ * Strictly sanitizes output; NEVER logs or returns keys, secrets, or headers.
+ */
+export async function diagnoseCloudinaryConnection(): Promise<{
+  success: boolean;
+  pingStatus?: string;
+  httpCode?: number;
+  error?: string;
+}> {
+  try {
+    await requireSuperAdminSession();
+
+    const cloudName = process.env.CLOUDINARY_CLOUD_NAME?.trim();
+    const apiKey = process.env.CLOUDINARY_API_KEY?.trim();
+    const apiSecret = process.env.CLOUDINARY_API_SECRET?.trim();
+
+    if (!cloudName || !apiKey || !apiSecret) {
+      return {
+        success: false,
+        error: 'Cloudinary API credentials missing in environment variables.',
+      };
+    }
+
+    cloudinary.config({
+      cloud_name: cloudName,
+      api_key: apiKey,
+      api_secret: apiSecret,
+      secure: true,
+    });
+
+    const pingResult = await cloudinary.api.ping();
+
+    console.info('[Cloudinary Read-Only Diagnostic]: Ping succeeded.', {
+      status: pingResult?.status,
+      cloudNameLength: cloudName.length,
+      apiKeyLength: apiKey.length,
+    });
+
+    return {
+      success: true,
+      pingStatus: pingResult?.status || 'ok',
+    };
+  } catch (err: unknown) {
+    const errObj = (err || {}) as Record<string, unknown>;
+    const httpCode = typeof errObj.http_code === 'number' ? errObj.http_code : undefined;
+    const msg = err instanceof Error ? err.message : 'Cloudinary ping failed';
+
+    console.error('[Cloudinary Read-Only Diagnostic Failed]:', {
+      http_code: httpCode,
+      message: msg,
+    });
+
+    return {
+      success: false,
+      httpCode,
+      error: `Cloudinary read-only API ping failed (HTTP ${httpCode || 'unknown'}): ${msg}`,
+    };
+  }
 }
 
 /**

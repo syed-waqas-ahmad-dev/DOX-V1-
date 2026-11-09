@@ -11,9 +11,11 @@ const cloudName = process.env.CLOUDINARY_CLOUD_NAME?.trim();
 const apiKey = process.env.CLOUDINARY_API_KEY?.trim();
 const apiSecret = process.env.CLOUDINARY_API_SECRET?.trim();
 
+export function isCloudinaryConfigured(): boolean {
+  return Boolean(cloudName && apiKey && apiSecret);
+}
+
 if (!cloudName || !apiKey || !apiSecret) {
-  // We don't throw here to avoid crashing the app on module load if envs are missing,
-  // but we should warn in development.
   if (process.env.NODE_ENV === 'development') {
     console.warn('[CLOUDINARY] Warning: Cloudinary environment variables are missing.');
   }
@@ -27,3 +29,4 @@ cloudinary.config({
 });
 
 export { cloudinary };
+

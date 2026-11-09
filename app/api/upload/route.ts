@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { cloudinary } from '@/lib/cloudinary';
+import { cloudinary, isCloudinaryConfigured } from '@/lib/cloudinary';
 import { verifyDepartmentAuth } from '@/lib/auth-guard';
 import { Department } from '@/types';
 
 /**
  * @file app/api/upload/route.ts
  * @description Secure server-side image upload handler using Cloudinary Signed Uploads.
- * Enforces strict authorization and validates file integrity.
+ * Enforces strict authorization, folder sanitization, and file integrity checks.
  */
 
 export const runtime = 'nodejs';
@@ -27,16 +27,28 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 2. Parse FormData
+    // 2. Validate Server Configuration
+    if (!isCloudinaryConfigured()) {
+      console.error('[CLOUDINARY CONFIG ERROR] Server environment variables are incomplete.');
+      return NextResponse.json(
+        { error: 'Cloudinary server configuration incomplete. Please verify CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET on hosting environment.' },
+        { status: 500 }
+      );
+    }
+
+    // 3. Parse FormData
     const formData = await req.formData();
     const file = formData.get('file') as File | null;
-    const folder = (formData.get('folder') as string) || 'ox_secure';
+    const rawFolder = (formData.get('folder') as string) || 'ox_secure';
 
     if (!file) {
       return NextResponse.json({ error: 'No file provided.' }, { status: 400 });
     }
 
-    // 3. Basic File Validation
+    // Sanitize folder path (allow only alphanumeric, underscores, hyphens, and slashes)
+    const folder = rawFolder.replace(/[^a-zA-Z0-9_\-\/]/g, '').replace(/\/+/g, '/').slice(0, 100) || 'ox_secure';
+
+    // 4. Basic File Validation
     const MAX_SIZE = 10 * 1024 * 1024; // 10MB
     if (file.size > MAX_SIZE) {
       return NextResponse.json(
@@ -48,23 +60,22 @@ export async function POST(req: NextRequest) {
     const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/avif'];
     if (!ALLOWED_TYPES.includes(file.type)) {
       return NextResponse.json(
-        { error: 'Invalid file type. Only JPEG, PNG, WebP, and AVIF are allowed.' },
+        { error: 'Invalid file type. Only JPEG, PNG, WebP, and AVIF images are allowed.' },
         { status: 400 }
       );
     }
 
-    // 4. Convert File to Buffer
+    // 5. Convert File to Buffer
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
 
-    // 5. Secure Signed Upload via SDK
-    // Using 'ml_default' signed preset if compatible, otherwise standard signed upload.
-    // The Cloudinary SDK automatically handles signature generation on the server.
+    // 6. Secure Signed Upload via SDK
+    // Note: Signed server uploads using the SDK derive authorization from api_key + api_secret signature.
+    // We intentionally omit 'upload_preset' to prevent conflicts with unsigned dashboard presets.
     return new Promise<NextResponse>((resolve) => {
       const uploadStream = cloudinary.uploader.upload_stream(
         {
           folder,
-          upload_preset: 'ml_default',
           resource_type: 'auto',
         },
         (error, result) => {
@@ -115,7 +126,7 @@ export async function POST(req: NextRequest) {
   } catch (error: any) {
     console.error('[UPLOAD ROUTE ERROR]', error);
     return NextResponse.json(
-      { error: 'Internal server error during upload.' },
+      { error: 'Internal server error during image upload.' },
       { status: 500 }
     );
   }

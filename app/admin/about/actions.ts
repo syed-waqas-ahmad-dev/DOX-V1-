@@ -8,7 +8,7 @@
  * Strict TypeScript: ZERO `any`.
  */
 
-import { cloudinary } from '@/lib/cloudinary';
+import { cloudinary, isCloudinaryConfigured } from '@/lib/cloudinary';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { connectToDatabase } from '@/lib/db/connect';
@@ -39,12 +39,15 @@ async function uploadBufferToCloudinary(
   resourceType: 'auto' | 'image' | 'video' = 'auto',
   mimeType: string = 'image/jpeg'
 ): Promise<{ secure_url: string; public_id: string }> {
+  if (!isCloudinaryConfigured()) {
+    throw new Error('Cloudinary environment variables (CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET) are missing or incomplete.');
+  }
+
   return new Promise<{ secure_url: string; public_id: string }>((resolve, reject) => {
     const uploadStream = cloudinary.uploader.upload_stream(
       {
         folder,
         resource_type: resourceType,
-        upload_preset: 'ml_default',
       },
       (error, res) => {
         if (error || !res) {
@@ -503,11 +506,7 @@ export async function deleteGalleryItem(id: string): Promise<{
       return { success: false, error: 'Gallery item not found.' };
     }
 
-    const cloudName = process.env.CLOUDINARY_CLOUD_NAME?.trim();
-    const apiKey = process.env.CLOUDINARY_API_KEY?.trim();
-    const apiSecret = process.env.CLOUDINARY_API_SECRET?.trim();
-
-    if (item.publicId && cloudName && apiKey && apiSecret && !item.publicId.startsWith('ox_')) {
+    if (item.publicId && isCloudinaryConfigured() && !item.publicId.startsWith('ox_')) {
       try {
         await cloudinary.uploader.destroy(item.publicId, {
           resource_type: item.type === 'video' ? 'video' : 'image',

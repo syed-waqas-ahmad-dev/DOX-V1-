@@ -1,120 +1,105 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { cloudinary } from '@/lib/cloudinary';
+import { verifyDepartmentAuth } from '@/lib/auth-guard';
+import { Department } from '@/types';
+
 /**
  * @file app/api/upload/route.ts
- * @description File and footwear product image upload handler.
- * Uploads to Cloudinary when configured (CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET).
- * Fallback to resilient mock URL if keys are not provided or on network error (ZERO CRASH).
- * Strict TypeScript: ZERO `any`.
+ * @description Secure server-side image upload handler using Cloudinary Signed Uploads.
+ * Enforces strict authorization and validates file integrity.
  */
 
-import { NextResponse, type NextRequest } from 'next/server';
-import crypto from 'crypto';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
+export const runtime = 'nodejs';
 
 export async function POST(req: NextRequest) {
   try {
-    let session = null;
-    try {
-      session = await getServerSession(authOptions);
-    } catch {
-      session = null;
-    }
+    // 1. Authorization Check
+    // Managers in INVENTORY department with 'products:write' or SUPER_ADMIN/ADMIN are allowed.
+    const auth = await verifyDepartmentAuth({
+      requiredDepartment: Department.INVENTORY,
+      requiredPermission: 'products:write',
+    });
 
-    if (!session?.user) {
+    if (!auth.authorized) {
       return NextResponse.json(
-        { error: 'Unauthorized: Authentication required to upload files.' },
-        { status: 401 }
+        { error: auth.error || 'Unauthorized: Product write clearance required.' },
+        { status: 403 }
       );
     }
 
+    // 2. Parse FormData
     const formData = await req.formData();
     const file = formData.get('file') as File | null;
-    const category = (formData.get('category') as string) || 'products';
+    const folder = (formData.get('folder') as string) || 'ox_secure';
 
     if (!file) {
       return NextResponse.json({ error: 'No file provided.' }, { status: 400 });
     }
 
-    // Validate size (< 5MB)
-    if (file.size > 5 * 1024 * 1024) {
+    // 3. Basic File Validation
+    const MAX_SIZE = 10 * 1024 * 1024; // 10MB
+    if (file.size > MAX_SIZE) {
       return NextResponse.json(
-        { error: 'File exceeds maximum permissible size of 5 MB.' },
+        { error: 'File size exceeds 10MB limit.' },
         { status: 400 }
       );
     }
 
-    // Validate mime type
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/avif', 'application/pdf'];
-    if (!allowedTypes.includes(file.type)) {
+    const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/avif'];
+    if (!ALLOWED_TYPES.includes(file.type)) {
       return NextResponse.json(
-        { error: 'Invalid file format. Only JPG, PNG, WEBP, and PDF files are allowed.' },
+        { error: 'Invalid file type. Only JPEG, PNG, WebP, and AVIF are allowed.' },
         { status: 400 }
       );
     }
 
-    const cloudName = process.env.CLOUDINARY_CLOUD_NAME?.trim();
-    const apiKey = process.env.CLOUDINARY_API_KEY?.trim();
-    const apiSecret = process.env.CLOUDINARY_API_SECRET?.trim();
+    // 4. Convert File to Buffer
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
 
-    // 1. If Cloudinary credentials are provided, attempt real Cloudinary upload
-    if (cloudName && apiKey && apiSecret) {
-      try {
-        const timestamp = Math.floor(Date.now() / 1000);
-        const folder = `ox_shoes/${category}`;
-        const signatureString = `folder=${folder}&timestamp=${timestamp}${apiSecret}`;
-        const signature = crypto.createHash('sha1').update(signatureString).digest('hex');
-
-        const uploadFormData = new FormData();
-        uploadFormData.append('file', file);
-        uploadFormData.append('api_key', apiKey);
-        uploadFormData.append('timestamp', timestamp.toString());
-        uploadFormData.append('folder', folder);
-        uploadFormData.append('signature', signature);
-
-        const cloudinaryRes = await fetch(
-          `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,
-          {
-            method: 'POST',
-            body: uploadFormData,
-          }
-        );
-
-        if (cloudinaryRes.ok) {
-          const cloudData = (await cloudinaryRes.json()) as {
-            secure_url?: string;
-            public_id?: string;
-          };
-          if (cloudData.secure_url) {
-            return NextResponse.json({
-              success: true,
-              url: cloudData.secure_url,
-              publicId: cloudData.public_id || `cloud_${Date.now()}`,
-              filename: file.name,
-              provider: 'cloudinary',
+    // 5. Secure Signed Upload via SDK
+    // Using 'ml_default' signed preset if compatible, otherwise standard signed upload.
+    // The Cloudinary SDK automatically handles signature generation on the server.
+    return new Promise<NextResponse>((resolve) => {
+      const uploadStream = cloudinary.uploader.upload_stream(
+        {
+          folder,
+          upload_preset: 'ml_default',
+          resource_type: 'auto',
+        },
+        (error, result) => {
+          if (error) {
+            console.error('[CLOUDINARY UPLOAD ERROR]', {
+              message: error.message,
+              http_code: error.http_code,
+              name: error.name,
             });
+            
+            return resolve(
+              NextResponse.json(
+                { error: 'Cloudinary upload failed: ' + (error.message || 'Unknown error') },
+                { status: error.http_code || 500 }
+              )
+            );
           }
+
+          resolve(
+            NextResponse.json({
+              success: true,
+              secure_url: result?.secure_url,
+              public_id: result?.public_id,
+            })
+          );
         }
-      } catch {
-        // Fall through to resilient mock fallback - DO NOT CRASH
-      }
-    }
+      );
 
-    // 2. Resilient Fallback: Safe mock upload URL
-    const fileId = `ox_${category}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
-    const ext = file.name.split('.').pop() || 'jpg';
-    const fallbackUrl = `/uploads/${category}/${fileId}.${ext}`;
-
-    return NextResponse.json({
-      success: true,
-      url: fallbackUrl,
-      publicId: fileId,
-      filename: file.name,
-      sizeBytes: file.size,
-      contentType: file.type,
-      provider: 'mock-fallback',
+      uploadStream.end(buffer);
     });
-  } catch (error: unknown) {
-    const msg = error instanceof Error ? error.message : 'Upload failed';
-    return NextResponse.json({ error: msg }, { status: 500 });
+  } catch (error: any) {
+    console.error('[UPLOAD ROUTE ERROR]', error);
+    return NextResponse.json(
+      { error: 'Internal server error during upload.' },
+      { status: 500 }
+    );
   }
 }

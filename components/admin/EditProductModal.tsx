@@ -55,20 +55,21 @@ export const EditProductModal = memo(function EditProductModal({
     if (!file) return;
     setUploading(true);
     try {
-      const formDataCloud = new FormData();
-      formDataCloud.append('file', file);
-      formDataCloud.append('upload_preset', 'ox_shoes_unsigned');
-      formDataCloud.append('folder', 'ox-shoes-products');
-      const res = await fetch(`https://api.cloudinary.com/v1_1/${process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME}/image/upload`, {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('folder', 'ox-shoes-products');
+      const res = await fetch('/api/upload', {
         method: 'POST',
-        body: formDataCloud,
+        body: formData,
       });
       const data = await res.json();
-      if (data.secure_url) {
+      if (res.ok && data.secure_url) {
         setImages([data.secure_url]);
+      } else {
+        throw new Error(data.error || 'Upload failed');
       }
-    } catch (error) {
-      alert('Upload failed');
+    } catch (error: any) {
+      alert(error.message || 'Upload failed');
     } finally {
       setUploading(false);
     }

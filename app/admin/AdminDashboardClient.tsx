@@ -249,31 +249,26 @@ export default function AdminDashboardClient({
     setPreview(localPreview);
     
     try {
-      const formDataCloud = new FormData();
-      formDataCloud.append('file', file);
-      formDataCloud.append('upload_preset', 'ox_shoes_unsigned');
-      formDataCloud.append('folder', 'ox-shoes-products');
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('folder', 'ox-shoes-products');
       
-      const res = await fetch(
-        `https://api.cloudinary.com/v1_1/${process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME}/image/upload`,
-        {
-          method: 'POST',
-          body: formDataCloud,
-        }
-      );
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        body: formData,
+      });
       
       const data = await res.json();
       
-      if (data.secure_url) {
+      if (res.ok && data.secure_url) {
         onUpload(data.secure_url);
         setPreview(data.secure_url);
-        console.log('Cloudinary URL:', data.secure_url);
       } else {
-        throw new Error('Upload failed');
+        throw new Error(data.error || 'Upload failed');
       }
-    } catch (error) {
-      console.error('Cloudinary upload error:', error);
-      alert('Image upload failed! Try again.');
+    } catch (error: any) {
+      console.error('Upload error:', error);
+      alert(error.message || 'Image upload failed! Try again.');
       setPreview('');
     } finally {
       setUploading(false);

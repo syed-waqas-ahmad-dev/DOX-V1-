@@ -8,7 +8,7 @@
  * Strict TypeScript: ZERO `any`.
  */
 
-import { v2 as cloudinary } from 'cloudinary';
+import { cloudinary } from '@/lib/cloudinary';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { connectToDatabase } from '@/lib/db/connect';
@@ -16,14 +16,6 @@ import { AboutPage, type IAboutPage, type IAboutHeroImage, type IAboutTeamCatego
 import { GalleryItem, type IGalleryItem, type GalleryMediaType } from '@/models/GalleryItem';
 import { revalidatePath } from 'next/cache';
 import mongoose from 'mongoose';
-
-// Initialize Cloudinary v2 SDK
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME?.trim(),
-  api_key: process.env.CLOUDINARY_API_KEY?.trim(),
-  api_secret: process.env.CLOUDINARY_API_SECRET?.trim(),
-  secure: true,
-});
 
 const MAX_IMAGE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
 const MAX_VIDEO_SIZE_BYTES = 100 * 1024 * 1024; // 100MB
@@ -47,29 +39,12 @@ async function uploadBufferToCloudinary(
   resourceType: 'auto' | 'image' | 'video' = 'auto',
   mimeType: string = 'image/jpeg'
 ): Promise<{ secure_url: string; public_id: string }> {
-  const cloudName = process.env.CLOUDINARY_CLOUD_NAME?.trim();
-  const apiKey = process.env.CLOUDINARY_API_KEY?.trim();
-  const apiSecret = process.env.CLOUDINARY_API_SECRET?.trim();
-
-  if (!cloudName || !apiKey || !apiSecret) {
-    throw new Error(
-      'Cloudinary API configuration is missing. Please ensure CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET environment variables are set.'
-    );
-  }
-
-  // Synchronize Cloudinary SDK configuration using validated, trimmed credentials
-  cloudinary.config({
-    cloud_name: cloudName,
-    api_key: apiKey,
-    api_secret: apiSecret,
-    secure: true,
-  });
-
   return new Promise<{ secure_url: string; public_id: string }>((resolve, reject) => {
     const uploadStream = cloudinary.uploader.upload_stream(
       {
         folder,
         resource_type: resourceType,
+        upload_preset: 'ml_default',
       },
       (error, res) => {
         if (error || !res) {
@@ -85,17 +60,11 @@ async function uploadBufferToCloudinary(
             (typeof headers['x-cld-error'] === 'string' ? headers['x-cld-error'] : undefined);
 
           // SECURE SERVER-SIDE DIAGNOSTIC LOGGING
-          // Note: SDK source node_modules/cloudinary/lib/uploader.js line 479 parses JSON error bodies only for [200, 400, 401, 404, 420, 429, 500].
-          // Status 403 bypasses body parsing in the SDK and returns name: "UnexpectedResponse", discarding res.headers & res.body.
           console.error('[Cloudinary SDK Error Diagnostic]:', {
             message: rawMessage,
             http_code: httpCode,
             name: errorName,
             x_cld_error: xCldError,
-            cloudNameConfigured: Boolean(cloudName),
-            cloudNameLength: cloudName ? cloudName.length : 0,
-            apiKeyLength: apiKey ? apiKey.length : 0,
-            apiSecretConfigured: Boolean(apiSecret),
             folder,
             resourceType,
             mimeType,
@@ -152,30 +121,10 @@ export async function diagnoseCloudinaryConnection(): Promise<{
   try {
     await requireSuperAdminSession();
 
-    const cloudName = process.env.CLOUDINARY_CLOUD_NAME?.trim();
-    const apiKey = process.env.CLOUDINARY_API_KEY?.trim();
-    const apiSecret = process.env.CLOUDINARY_API_SECRET?.trim();
-
-    if (!cloudName || !apiKey || !apiSecret) {
-      return {
-        success: false,
-        error: 'Cloudinary API credentials missing in environment variables.',
-      };
-    }
-
-    cloudinary.config({
-      cloud_name: cloudName,
-      api_key: apiKey,
-      api_secret: apiSecret,
-      secure: true,
-    });
-
     const pingResult = await cloudinary.api.ping();
 
     console.info('[Cloudinary Read-Only Diagnostic]: Ping succeeded.', {
       status: pingResult?.status,
-      cloudNameLength: cloudName.length,
-      apiKeyLength: apiKey.length,
     });
 
     return {

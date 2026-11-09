@@ -10,7 +10,7 @@
 
 import React, { useState, memo } from 'react';
 import { ProductCategory, ProductSubCategory, ProductBrand, type IProduct } from '@/types';
-import { Plus, X, Sparkles, Loader2 } from 'lucide-react';
+import { Plus, X, Sparkles, Loader2, Upload } from 'lucide-react';
 
 export interface CreateProductPayload {
   name: string;
@@ -68,8 +68,38 @@ export const CreateProductModal = memo(function CreateProductModal({
   // Completely isolated local state — typing NEVER triggers parent re-render!
   const [form, setForm] = useState<CreateProductPayload>(INITIAL_FORM);
   const [submitting, setSubmitting] = useState<boolean>(false);
+  const [uploading, setUploading] = useState<boolean>(false);
 
   if (!isOpen) return null;
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('folder', 'ox-shoes-products');
+
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const data = await res.json();
+
+      if (res.ok && data.secure_url) {
+        setForm((prev) => ({ ...prev, image: data.secure_url }));
+      } else {
+        throw new Error(data.error || 'Upload failed');
+      }
+    } catch (error: any) {
+      alert(error.message || 'Image upload failed! Try again.');
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -222,14 +252,31 @@ export const CreateProductModal = memo(function CreateProductModal({
           </div>
 
           <div className="space-y-1">
-            <label className="font-bold text-neutral-300">Image URL</label>
-            <input
-              type="url"
-              value={form.image}
-              onChange={(e) => setForm((prev) => ({ ...prev, image: e.target.value }))}
-              placeholder="https://images.unsplash.com/photo-..."
-              className="w-full px-3 py-2 rounded-xl bg-neutral-950 border border-neutral-800 text-white focus:outline-none focus:border-amber-500"
-            />
+            <label className="font-bold text-neutral-300">Shoe Primary Image *</label>
+            <div className="flex gap-2">
+              <input
+                type="url"
+                value={form.image}
+                onChange={(e) => setForm((prev) => ({ ...prev, image: e.target.value }))}
+                placeholder="https://images.unsplash.com/photo-..."
+                required
+                className="w-full px-3 py-2 rounded-xl bg-neutral-950 border border-neutral-800 text-white focus:outline-none focus:border-amber-500"
+              />
+              <label className="bg-amber-500 px-4 py-2 rounded-xl cursor-pointer font-bold text-black flex items-center justify-center min-w-[50px] hover:bg-amber-400 transition-colors">
+                {uploading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Upload className="h-4 w-4" />
+                )}
+                <input type="file" accept="image/*" onChange={handleFileUpload} className="hidden" disabled={uploading} />
+              </label>
+            </div>
+            {form.image && (
+              <div className="relative w-24 h-24 mt-2 rounded-xl overflow-hidden border border-neutral-800">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={form.image} alt="Preview" className="w-full h-full object-cover" />
+              </div>
+            )}
           </div>
 
           <div className="space-y-1">
@@ -260,14 +307,14 @@ export const CreateProductModal = memo(function CreateProductModal({
             <button
               type="button"
               onClick={onClose}
-              disabled={submitting}
+              disabled={submitting || uploading}
               className="px-4 py-2 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-300 font-bold"
             >
               Cancel
             </button>
             <button
               type="submit"
-              disabled={submitting}
+              disabled={submitting || uploading}
               className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-black uppercase tracking-wider flex items-center gap-2 disabled:opacity-50 shadow-md"
             >
               {submitting ? (

@@ -71,10 +71,9 @@ async function uploadBufferToCloudinary(
             bufferSizeBytes: buffer.length,
           });
 
-          let userFacingMessage = `Cloudinary upload failed: ${rawMessage}`;
-          if (httpCode === 403 || rawMessage.includes('403')) {
-            userFacingMessage =
-              'Cloudinary upload failed (HTTP 403 Forbidden): Access denied by Cloudinary API. Please verify that CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET in environment variables match an active Cloudinary account.';
+          let userFacingMessage = `Cloudinary upload failed (HTTP ${httpCode || 'unknown'}): ${rawMessage}`;
+          if (xCldError) {
+            userFacingMessage += ` [Detail: ${xCldError}]`;
           }
 
           reject(new Error(userFacingMessage));

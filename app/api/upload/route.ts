@@ -69,16 +69,33 @@ export async function POST(req: NextRequest) {
         },
         (error, result) => {
           if (error) {
+            const errObj = (error || {}) as Record<string, unknown>;
+            const httpCode = typeof errObj.http_code === 'number' ? errObj.http_code : undefined;
+            const rawMessage = error?.message || 'Empty response received from Cloudinary API';
+            const errorName = error?.name || 'CloudinaryError';
+            
+            const headers = (errObj.headers || {}) as Record<string, unknown>;
+            const xCldError =
+              (typeof errObj.x_cld_error === 'string' ? errObj.x_cld_error : undefined) ||
+              (typeof headers['x-cld-error'] === 'string' ? headers['x-cld-error'] : undefined);
+
             console.error('[CLOUDINARY UPLOAD ERROR]', {
-              message: error.message,
-              http_code: error.http_code,
-              name: error.name,
+              message: rawMessage,
+              http_code: httpCode,
+              name: errorName,
+              x_cld_error: xCldError,
+              folder,
             });
             
+            let userFacingMessage = `Cloudinary upload failed (HTTP ${httpCode || 'unknown'}): ${rawMessage}`;
+            if (xCldError) {
+              userFacingMessage += ` [Detail: ${xCldError}]`;
+            }
+
             return resolve(
               NextResponse.json(
-                { error: 'Cloudinary upload failed: ' + (error.message || 'Unknown error') },
-                { status: error.http_code || 500 }
+                { error: userFacingMessage },
+                { status: httpCode || 500 }
               )
             );
           }

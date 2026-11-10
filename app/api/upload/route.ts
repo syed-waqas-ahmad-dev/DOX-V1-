@@ -39,14 +39,14 @@ export async function POST(req: NextRequest) {
     // 3. Parse FormData
     const formData = await req.formData();
     const file = formData.get('file') as File | null;
-    const rawFolder = (formData.get('folder') as string) || 'ox_secure';
+    const rawFolder = (formData.get('folder') as string) || 'ox_products';
 
     if (!file) {
       return NextResponse.json({ error: 'No file provided.' }, { status: 400 });
     }
 
     // Sanitize folder path (allow only alphanumeric, underscores, hyphens, and slashes)
-    const folder = rawFolder.replace(/[^a-zA-Z0-9_\-\/]/g, '').replace(/\/+/g, '/').slice(0, 100) || 'ox_secure';
+    const folder = rawFolder.replace(/[^a-zA-Z0-9_\-\/]/g, '').replace(/\/+/g, '/').slice(0, 100) || 'ox_products';
 
     // 4. Basic File Validation
     const MAX_SIZE = 10 * 1024 * 1024; // 10MB
@@ -70,14 +70,19 @@ export async function POST(req: NextRequest) {
     const buffer = Buffer.from(arrayBuffer);
 
     // 6. Secure Signed Upload via SDK
-    // Note: Signed server uploads using the SDK derive authorization from api_key + api_secret signature.
-    // We intentionally omit 'upload_preset' to prevent conflicts with unsigned dashboard presets.
+    const uploadOptions: Record<string, unknown> = {
+      folder,
+      resource_type: 'auto',
+    };
+
+    const presetName = process.env.CLOUDINARY_UPLOAD_PRESET?.trim() || 'ox_signed';
+    if (presetName) {
+      uploadOptions.upload_preset = presetName;
+    }
+
     return new Promise<NextResponse>((resolve) => {
       const uploadStream = cloudinary.uploader.upload_stream(
-        {
-          folder,
-          resource_type: 'auto',
-        },
+        uploadOptions,
         (error, result) => {
           if (error) {
             const errObj = (error || {}) as Record<string, unknown>;

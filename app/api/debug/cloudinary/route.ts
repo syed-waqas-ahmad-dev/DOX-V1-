@@ -45,15 +45,12 @@ export async function POST(req: NextRequest) {
     const apiKey = process.env.CLOUDINARY_API_KEY!.trim();
     const apiSecret = process.env.CLOUDINARY_API_SECRET!.trim();
 
-    // 2. Prepare signed parameters with intended upload_preset (ox_signed)
+    // 2. Prepare signed parameters without upload_preset
     const timestamp = Math.round(Date.now() / 1000);
-    const folder = 'ox_debug_test';
-    const presetName = process.env.CLOUDINARY_UPLOAD_PRESET?.trim() || 'ox_signed';
-
+    const folder = 'ox_products';
     const paramsToSign: Record<string, string | number> = {
       folder,
       timestamp,
-      ...(presetName ? { upload_preset: presetName } : {}),
     };
 
     // 3. Cryptographically sign request using SDK utility
@@ -65,9 +62,6 @@ export async function POST(req: NextRequest) {
     formData.append('timestamp', timestamp.toString());
     formData.append('signature', signature);
     formData.append('folder', folder);
-    if (presetName) {
-      formData.append('upload_preset', presetName);
-    }
 
     // Tiny 1x1 transparent PNG pixel as test payload
     const pixelBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BvAAMDAgBqA9LzAAAAAElFTkSuQmCC';

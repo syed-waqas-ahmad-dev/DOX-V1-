@@ -53,17 +53,20 @@ export default function MapComponent({
   return (
     <div
       style={style}
-      className={`relative rounded-2xl overflow-hidden border border-neutral-800 shadow-xl bg-neutral-950 ${className}`}
+      className={`relative z-0 isolate overflow-hidden rounded-2xl border border-neutral-800 shadow-xl bg-neutral-950 ${className}`}
     >
       <MapContainer
         center={mapCenter}
         zoom={zoom}
         scrollWheelZoom={false}
-        style={{ height: '100%', width: '100%' }}
+        className="z-0"
+        style={{ height: '100%', width: '100%', zIndex: 0 }}
       >
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          maxZoom={19}
+          minZoom={5}
         />
         {markers.map((marker, idx) => (
           <Marker key={idx} position={marker.position} icon={defaultMarkerIcon}>

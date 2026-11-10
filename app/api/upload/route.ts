@@ -70,19 +70,12 @@ export async function POST(req: NextRequest) {
     const buffer = Buffer.from(arrayBuffer);
 
     // 6. Secure Signed Upload via SDK
-    const uploadOptions: Record<string, unknown> = {
-      folder,
-      resource_type: 'auto',
-    };
-
-    const presetName = process.env.CLOUDINARY_UPLOAD_PRESET?.trim() || 'ox_signed';
-    if (presetName) {
-      uploadOptions.upload_preset = presetName;
-    }
-
     return new Promise<NextResponse>((resolve) => {
       const uploadStream = cloudinary.uploader.upload_stream(
-        uploadOptions,
+        {
+          folder,
+          resource_type: 'auto',
+        },
         (error, result) => {
           if (error) {
             const errObj = (error || {}) as Record<string, unknown>;

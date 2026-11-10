@@ -43,19 +43,12 @@ async function uploadBufferToCloudinary(
     throw new Error('Cloudinary environment variables (CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET) are missing or incomplete.');
   }
 
-  const uploadOptions: Record<string, unknown> = {
-    folder,
-    resource_type: resourceType,
-  };
-
-  const presetName = process.env.CLOUDINARY_UPLOAD_PRESET?.trim() || 'ox_signed';
-  if (presetName) {
-    uploadOptions.upload_preset = presetName;
-  }
-
   return new Promise<{ secure_url: string; public_id: string }>((resolve, reject) => {
     const uploadStream = cloudinary.uploader.upload_stream(
-      uploadOptions,
+      {
+        folder,
+        resource_type: resourceType,
+      },
       (error, res) => {
         if (error || !res) {
           const errObj = (error || {}) as Record<string, unknown>;

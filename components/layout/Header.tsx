@@ -99,7 +99,7 @@ export function Header({ onOpenSearch }: HeaderProps) {
     : null;
 
   return (
-    <header className="sticky top-0 z-40 w-full bg-white/95 backdrop-blur-md border-b border-neutral-200 text-neutral-900 transition-colors">
+    <header className="sticky top-0 z-[9999] isolate w-full bg-white/95 backdrop-blur-md border-b border-neutral-200 text-neutral-900 transition-colors">
       <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16 sm:h-20 gap-2 sm:gap-4">
           {/* Left: Brand Image Logo ONLY (no text, no left menu) */}

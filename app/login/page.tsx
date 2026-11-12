@@ -28,7 +28,7 @@ import {
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const errorQuery = searchParams.get('error');
+  const errorQuery = searchParams?.get('error');
 
   const { data: session, status } = useSession();
 

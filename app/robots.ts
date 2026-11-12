@@ -6,7 +6,7 @@ import type { MetadataRoute } from 'next';
  * Configures indexable public storefront routes and blocks private/sensitive endpoints.
  */
 export default function robots(): MetadataRoute.Robots {
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://oxshoes.pk';
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://dawoodkhan-ox-shoes.vercel.app';
 
   return {
     rules: [

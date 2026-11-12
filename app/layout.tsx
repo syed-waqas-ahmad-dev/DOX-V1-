@@ -8,7 +8,7 @@ export const viewport: Viewport = {
   initialScale: 1,
 };
 
-const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://oxshoes.pk';
+const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://dawoodkhan-ox-shoes.vercel.app';
 
 export const metadata: Metadata = {
   metadataBase: new URL(baseUrl),
@@ -41,11 +41,14 @@ export const metadata: Metadata = {
   },
   icons: {
     icon: [
-      { url: '/icon.jpg', type: 'image/jpeg' },
-      { url: '/images/ox-shoes-logo.jpg', type: 'image/jpeg' },
+      { url: '/favicon.ico', sizes: '32x32', type: 'image/x-icon' },
+      { url: '/icon-192.png', sizes: '192x192', type: 'image/png' },
     ],
-    apple: '/icon.jpg',
+    apple: [
+      { url: '/apple-touch-icon.png', sizes: '180x180', type: 'image/png' },
+    ],
   },
+  manifest: '/manifest.json',
   openGraph: {
     title: 'Bajaur OX Shoes',
     description:

@@ -294,12 +294,13 @@ export function HeroSlider() {
               aria-hidden={currentIndex !== index}
             >
               {/* Clean, Bright Background Image - NO heavy dark filter! */}
-              <div className="absolute inset-0 z-0">
+              <div className="absolute inset-0 z-0 bg-neutral-950">
                 <Image
                   src={slide.image}
                   alt={slide.imageAlt}
                   fill
                   priority={index === 0}
+                  loading={index === 0 ? undefined : 'eager'}
                   referrerPolicy="no-referrer"
                   className={`object-cover ${slide.objectPositionClass}`}
                   sizes="100vw"

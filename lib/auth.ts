@@ -9,9 +9,12 @@ import { UserRole } from "@/types";
 const googleClientId = process.env.GOOGLE_CLIENT_ID?.trim();
 const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET?.trim();
 
-if (process.env.NODE_ENV === "production" && !process.env.NEXTAUTH_SECRET?.trim()) {
-  throw new Error("[SECURITY FATAL] NEXTAUTH_SECRET environment variable is missing in production.");
-}
+const authSecret = process.env.NEXTAUTH_SECRET || (() => {
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('NEXTAUTH_SECRET missing in Vercel Env');
+  }
+  return 'dev-only-fallback';
+})();
 
 export const authOptions: NextAuthOptions = {
   providers: [
@@ -59,7 +62,7 @@ export const authOptions: NextAuthOptions = {
     }),
   ],
   session: { strategy: "jwt" },
-  secret: process.env.NEXTAUTH_SECRET,
+  secret: authSecret,
   callbacks: {
     async signIn({ user, account, profile }) {
       if (account?.provider === "google") {

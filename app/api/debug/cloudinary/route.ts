@@ -14,7 +14,7 @@ import crypto from 'crypto';
 
 export const runtime = 'nodejs';
 
-const EXPECTED_CLOUD_NAME = 'vpqe5ypv';
+const EXPECTED_CLOUD_NAME = 'kbh75mm9';
 const HISTORICAL_FOLDER = 'dawood-ox/about';
 const HISTORICAL_TIMESTAMP = 1794574499;
 const HISTORICAL_EXPECTED_SIGNATURE = 'f0ef573ce2078a1936b8c265b2d13e7c8a25cc3b';
@@ -30,7 +30,7 @@ function timingSafeHexMatch(actualHex: string, expectedHex: string): boolean {
 }
 
 function sanitizeCloudinaryText(text: string): string {
-  return text.replace(/\b(Invalid Signature\s+)[a-fA-F0-9]{32,64}\b/gi, '$1[REDACTED]');
+  return text.replace(/\b(Invalid Signature[:\s]+)[a-fA-F0-9]{32,64}\b/gi, '$1[REDACTED]');
 }
 
 /**
@@ -185,6 +185,9 @@ export async function POST(_req: NextRequest) {
         ? String((responseBody.error as Record<string, unknown>).message ?? 'None')
         : 'None';
 
+    const rawXCldError = responseHeaders['x-cld-error'];
+    const xCldError = rawXCldError ? sanitizeCloudinaryText(rawXCldError) : 'None';
+
     // 8. Return sanitized forensic report (NO SECRETS OR SIGNATURES EXPOSED)
     const report = {
       success: response.ok,
@@ -199,7 +202,7 @@ export async function POST(_req: NextRequest) {
       configDiagnostics,
       httpStatus: responseStatus,
       cloudinaryError: rawErrMsg === 'None' ? 'None' : sanitizeCloudinaryText(rawErrMsg),
-      xCldError: responseHeaders['x-cld-error'] || 'None',
+      xCldError,
       rawBody: sanitizedRawBody,
       cleanup: {
         executed: Boolean(publicId),

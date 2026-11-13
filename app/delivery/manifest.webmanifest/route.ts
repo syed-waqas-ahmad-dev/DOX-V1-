@@ -1,13 +1,12 @@
 import type { MetadataRoute } from 'next';
 
 /**
- * @file app/manifest.ts
- * @description Native Next.js 15 App Router Web App Manifest for OX Shoes Rider Terminal.
- * Configures Android Chrome "Add to Home Screen" shortcut to launch directly into /delivery
- * in standalone app-like mode without browser address bars.
+ * @file app/delivery/manifest.webmanifest/route.ts
+ * @description Explicit Route Handler serving the OX Shoes Rider Terminal Web App Manifest
+ * at /delivery/manifest.webmanifest, preserving isolated /delivery scope and identity.
  */
-export default function manifest(): MetadataRoute.Manifest {
-  return {
+export function GET(): Response {
+  const manifest: MetadataRoute.Manifest = {
     id: '/delivery',
     name: 'Bajaur OX Shoes Rider Terminal',
     short_name: 'Bajaur OX',
@@ -32,4 +31,12 @@ export default function manifest(): MetadataRoute.Manifest {
       },
     ],
   };
+
+  return new Response(JSON.stringify(manifest), {
+    status: 200,
+    headers: {
+      'Content-Type': 'application/manifest+json; charset=utf-8',
+      'Cache-Control': 'public, max-age=3600, must-revalidate',
+    },
+  });
 }

@@ -14,7 +14,6 @@ import Link from 'next/link';
 import { Header } from '@/components/layout/Header';
 import { AnnouncementBar } from '@/components/layout/AnnouncementBar';
 import { Footer } from '@/components/layout/Footer';
-import { CartDrawer } from '@/components/layout/CartDrawer';
 import { SearchModal } from '@/components/layout/SearchModal';
 import { createReviewAction } from '@/actions/review.actions';
 import { useCartStore } from '@/lib/store/cart';
@@ -126,7 +125,6 @@ export function ProductDetailClient({ initialProduct: product, initialReviews }:
     <div className="min-h-screen bg-white text-neutral-900 flex flex-col justify-between">
       <AnnouncementBar />
       <Header onOpenSearch={() => setSearchModalOpen(true)} />
-      <CartDrawer />
       <SearchModal isOpen={searchModalOpen} onClose={() => setSearchModalOpen(false)} />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-12 w-full flex-1">

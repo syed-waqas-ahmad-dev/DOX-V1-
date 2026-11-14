@@ -13,7 +13,6 @@ import { ProductCard } from '@/components/product/ProductCard';
 import { Header } from '@/components/layout/Header';
 import { AnnouncementBar } from '@/components/layout/AnnouncementBar';
 import { Footer } from '@/components/layout/Footer';
-import { CartDrawer } from '@/components/layout/CartDrawer';
 import { SearchModal } from '@/components/layout/SearchModal';
 import { getProducts } from '@/actions/product.actions';
 import { ProductCategory, ProductSubCategory, type IProduct } from '@/types';
@@ -117,7 +116,6 @@ function ShopContent() {
     <div className="min-h-screen bg-neutral-50 text-neutral-900 flex flex-col justify-between">
       <AnnouncementBar />
       <Header onOpenSearch={() => setSearchModalOpen(true)} />
-      <CartDrawer />
       <SearchModal isOpen={searchModalOpen} onClose={() => setSearchModalOpen(false)} />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full flex-1">

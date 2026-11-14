@@ -99,8 +99,14 @@ export function Header({ onOpenSearch }: HeaderProps) {
     : null;
 
   return (
-    <header className="sticky top-0 z-[9999] isolate w-full bg-white/95 backdrop-blur-md border-b border-neutral-200 text-neutral-900 transition-colors">
-      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
+    <header
+      className={`sticky top-0 z-[9999] isolate w-full bg-white/95 backdrop-blur-md border-b border-neutral-200 text-neutral-900 transition-colors ${
+        mobileMenuOpen
+          ? 'flex flex-col max-h-[100vh] supports-[height:100dvh]:max-h-[100dvh] lg:block lg:max-h-none'
+          : ''
+      }`}
+    >
+      <div className="w-full max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 shrink-0">
         <div className="flex items-center justify-between h-16 sm:h-20 gap-2 sm:gap-4">
           {/* Left: Brand Image Logo ONLY (no text, no left menu) */}
           <div className="flex items-center shrink-0">
@@ -342,7 +348,7 @@ export function Header({ onOpenSearch }: HeaderProps) {
       </div>
 
       {/* Second Mobile Bar: Wishlist (left), Search box (center, flexible), Cart (right) */}
-      <div className="lg:hidden bg-white border-t border-neutral-100">
+      <div className="lg:hidden w-full shrink-0 bg-white border-t border-neutral-100">
         <div className="flex items-center justify-between gap-2.5 w-full px-3 py-2">
           {/* Wishlist wrapper */}
           <div className="flex shrink-0 items-center justify-center">
@@ -396,7 +402,7 @@ export function Header({ onOpenSearch }: HeaderProps) {
 
       {/* Mobile Navigation Drawer */}
       {mobileMenuOpen && (
-        <div className="lg:hidden border-t border-neutral-200 bg-white px-4 py-4 space-y-4 animate-in slide-in-from-top-2 duration-200 shadow-lg">
+        <div className="lg:hidden w-full min-h-0 max-h-[calc(100vh-7.5rem)] sm:max-h-[calc(100vh-8.5rem)] supports-[height:100dvh]:max-h-[calc(100dvh-7.5rem)] supports-[height:100dvh]:sm:max-h-[calc(100dvh-8.5rem)] overflow-y-auto overflow-x-hidden overscroll-contain border-t border-neutral-200 bg-white px-4 pt-4 pb-6 space-y-4 animate-in slide-in-from-top-2 duration-200 shadow-lg">
           {/* Mobile Profile & Admin Quick Access */}
           <div className="flex flex-col gap-2 pb-3 border-b border-neutral-100">
             {/* Mobile Admin Quick Access - strictly visible to authorized admin and super_admin */}

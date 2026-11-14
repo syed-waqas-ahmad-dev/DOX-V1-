@@ -8,10 +8,12 @@
  */
 
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import Image from 'next/image';
 import { useCartStore } from '@/lib/store/cart';
 import { useLocale } from '@/lib/store/locale';
+import { useHydrated } from '@/lib/hooks/useHydrated';
 import { formatPKR } from '@/lib/formatters/currency';
 import { FREE_SHIPPING_THRESHOLD } from '@/lib/constants';
 import { validateCouponAction } from '@/actions/coupon.actions';
@@ -41,12 +43,13 @@ export function CartDrawer() {
     getSubtotal,
   } = useCartStore();
   const { isUrdu } = useLocale();
+  const isHydrated = useHydrated();
 
   const [couponCode, setCouponCode] = useState('');
   const [couponLoading, setCouponLoading] = useState(false);
   const [couponError, setCouponError] = useState<string | null>(null);
 
-  if (!isOpen) return null;
+  if (!isHydrated || !isOpen) return null;
 
   const subtotal = getSubtotal();
   const remainingForFreeShipping = Math.max(0, FREE_SHIPPING_THRESHOLD - subtotal);
@@ -77,16 +80,21 @@ export function CartDrawer() {
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 overflow-hidden">
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[10000] overflow-hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Shopping cart"
+    >
       {/* Backdrop */}
       <div
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity"
+        className="absolute inset-0 z-0 bg-black/60 backdrop-blur-sm transition-opacity"
         onClick={closeCart}
       />
 
-      <div className="fixed inset-y-0 right-0 max-w-full flex pl-10">
-        <div className="w-screen max-w-md bg-white shadow-2xl flex flex-col justify-between text-neutral-900">
+      <div className="fixed inset-y-0 right-0 z-10 max-w-full flex pl-10">
+        <div className="relative w-screen max-w-md bg-white shadow-2xl flex flex-col justify-between text-neutral-900">
           {/* Top Header */}
           <div className="px-6 py-5 border-b border-neutral-200 flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -318,6 +326,7 @@ export function CartDrawer() {
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

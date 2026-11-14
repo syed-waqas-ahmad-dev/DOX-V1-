@@ -16,7 +16,7 @@ export function AnnouncementBar() {
   const currentIsUrdu = isHydrated && isUrdu;
 
   return (
-    <div className="bg-neutral-900 text-neutral-200 text-xs py-2 px-4 border-b border-neutral-800 transition-colors">
+    <div className="hidden lg:block bg-neutral-900 text-neutral-200 text-xs py-2 px-4 border-b border-neutral-800 transition-colors">
       <div className="max-w-7xl mx-auto flex items-center justify-between text-[11px] sm:text-xs">
         <div className="flex items-center gap-2 font-medium tracking-wide mx-auto sm:mx-0">
           <Truck className="h-3.5 w-3.5 text-amber-400 shrink-0" />

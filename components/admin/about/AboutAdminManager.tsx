@@ -15,6 +15,8 @@ import {
   updateAboutPage,
   addGalleryItem,
   deleteGalleryItem,
+  createGalleryVideoUploadSignature,
+  saveGalleryVideoItem,
 } from '@/app/admin/about/actions';
 import type { IAboutPage, IAboutTeamCategory } from '@/models/AboutPage';
 import type { IGalleryItem } from '@/models/GalleryItem';
@@ -95,6 +97,7 @@ export function AboutAdminManager({ initialAbout, initialGallery }: AboutAdminMa
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const galleryFileInputRef = useRef<HTMLInputElement>(null);
+  const galleryUploadInFlightRef = useRef(false);
 
   // New role inputs
   const [newRoleName, setNewRoleName] = useState('');
@@ -346,29 +349,149 @@ export function AboutAdminManager({ initialAbout, initialGallery }: AboutAdminMa
 
   /**
    * Upload New Gallery Item
+   * - Videos: Two-step server-signed direct-to-Cloudinary upload (bypasses serverless payload limit)
+   * - Images: Existing Server Action upload flow (unchanged)
    */
   const handleUploadGalleryItem = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (galleryUploadInFlightRef.current || galleryUploading) {
+      return;
+    }
     if (!galleryFile) {
       setGalleryError('Please select an image or video file.');
       return;
     }
 
+    galleryUploadInFlightRef.current = true;
     setGalleryUploading(true);
     setGalleryError(null);
 
     try {
-      const formData = new FormData();
-      formData.append('file', galleryFile);
-      formData.append('title', galleryTitle);
-      formData.append('description', galleryDescription);
+      let uploadedItem: IGalleryItem;
+      const isVideo = galleryFileType === 'video' || galleryFile.type.startsWith('video/');
 
-      const res = await addGalleryItem(formData);
-      if (!res.success || !res.data) {
-        throw new Error(res.error || 'Failed to upload media item');
+      if (isVideo) {
+        if (!galleryFile.type.startsWith('video/')) {
+          throw new Error('Selected file is not a supported video format.');
+        }
+        const maxVideoBytes = 100 * 1024 * 1024;
+        if (galleryFile.size <= 0 || galleryFile.size > maxVideoBytes) {
+          throw new Error(
+            galleryFile.size <= 0
+              ? 'Selected video file is empty.'
+              : `Video exceeds 100MB maximum limit (${(galleryFile.size / (1024 * 1024)).toFixed(1)}MB).`
+          );
+        }
+
+        // Step 1: Request short-lived server-generated upload signature
+        const sigRes = await createGalleryVideoUploadSignature({
+          fileSize: galleryFile.size,
+          fileType: galleryFile.type,
+        });
+        if (!sigRes.success || !sigRes.data) {
+          throw new Error(sigRes.error || 'Failed to authorize direct video upload.');
+        }
+
+        const { cloudName, apiKey, signature, timestamp, folder } = sigRes.data;
+
+        // Step 2: Upload original File directly to Cloudinary HTTPS video/upload endpoint
+        const cldFormData = new FormData();
+        cldFormData.append('file', galleryFile);
+        cldFormData.append('api_key', apiKey);
+        cldFormData.append('timestamp', String(timestamp));
+        cldFormData.append('signature', signature);
+        cldFormData.append('folder', folder);
+
+        const uploadEndpoint = `https://api.cloudinary.com/v1_1/${encodeURIComponent(cloudName)}/video/upload`;
+
+        let cldResponse: Response;
+        try {
+          cldResponse = await fetch(uploadEndpoint, {
+            method: 'POST',
+            body: cldFormData,
+          });
+        } catch (networkErr: unknown) {
+          const networkMsg =
+            networkErr instanceof Error && networkErr.message
+              ? networkErr.message
+              : 'Network connection interrupted';
+          throw new Error(`Network error while uploading video to Cloudinary: ${networkMsg}`);
+        }
+
+        const rawResponseText = await cldResponse.text();
+        let parsedBody: Record<string, unknown> | null = null;
+        if (rawResponseText) {
+          try {
+            const parsed: unknown = JSON.parse(rawResponseText);
+            if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+              parsedBody = parsed as Record<string, unknown>;
+            }
+          } catch {
+            parsedBody = null;
+          }
+        }
+
+        if (!cldResponse.ok) {
+          const nestedError =
+            parsedBody && typeof parsedBody.error === 'object' && parsedBody.error !== null
+              ? (parsedBody.error as Record<string, unknown>)
+              : null;
+          const cldErrorMsg =
+            nestedError && typeof nestedError.message === 'string' && nestedError.message.trim()
+              ? nestedError.message.trim()
+              : parsedBody && typeof parsedBody.message === 'string' && parsedBody.message.trim()
+                ? parsedBody.message.trim()
+                : `Cloudinary rejected video upload (HTTP ${cldResponse.status}).`;
+          throw new Error(`Cloudinary video upload failed (HTTP ${cldResponse.status}): ${cldErrorMsg}`);
+        }
+
+        if (!parsedBody) {
+          throw new Error('Cloudinary returned a malformed non-JSON response during video upload.');
+        }
+
+        const secureUrl = typeof parsedBody.secure_url === 'string' ? parsedBody.secure_url.trim() : '';
+        const publicId = typeof parsedBody.public_id === 'string' ? parsedBody.public_id.trim() : '';
+        const returnedResourceType =
+          typeof parsedBody.resource_type === 'string' ? parsedBody.resource_type.trim() : '';
+
+        if (!secureUrl || !publicId) {
+          throw new Error('Cloudinary upload response is missing secure_url or public_id.');
+        }
+
+        if (returnedResourceType && returnedResourceType !== 'video') {
+          throw new Error(`Expected Cloudinary resource_type "video", received "${returnedResourceType}".`);
+        }
+
+        // Step 3: Verify via server-side Admin API and save GalleryItem in MongoDB
+        const saveRes = await saveGalleryVideoItem({
+          publicId,
+          secureUrl,
+          title: galleryTitle,
+          description: galleryDescription,
+        });
+        if (!saveRes.success || !saveRes.data) {
+          throw new Error(
+            saveRes.error || 'Video uploaded to Cloudinary, but failed to save gallery record.'
+          );
+        }
+
+        uploadedItem = saveRes.data;
+      } else {
+        // Existing image upload flow (unchanged)
+        const formData = new FormData();
+        formData.append('file', galleryFile);
+        formData.append('title', galleryTitle);
+        formData.append('description', galleryDescription);
+
+        const res = await addGalleryItem(formData);
+        if (!res.success || !res.data) {
+          throw new Error(res.error || 'Failed to upload media item');
+        }
+
+        uploadedItem = res.data;
       }
 
-      setGalleryItems([res.data, ...galleryItems]);
+      setGalleryItems([uploadedItem, ...galleryItems]);
       setGalleryFile(null);
       setGalleryPreview(null);
       setGalleryFileType(null);
@@ -376,9 +499,14 @@ export function AboutAdminManager({ initialAbout, initialGallery }: AboutAdminMa
       setGalleryDescription('');
       if (galleryFileInputRef.current) galleryFileInputRef.current.value = '';
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to upload gallery media';
+      const rawMsg = err instanceof Error ? err.message : 'Failed to upload gallery media';
+      const msg =
+        rawMsg === 'An unexpected response was received from the server.'
+          ? 'The server could not process the gallery request. Please verify your Super Admin session and retry.'
+          : rawMsg;
       setGalleryError(msg);
     } finally {
+      galleryUploadInFlightRef.current = false;
       setGalleryUploading(false);
     }
   };

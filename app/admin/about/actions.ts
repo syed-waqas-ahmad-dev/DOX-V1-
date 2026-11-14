@@ -19,6 +19,17 @@ import mongoose from 'mongoose';
 
 const MAX_IMAGE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
 const MAX_VIDEO_SIZE_BYTES = 100 * 1024 * 1024; // 100MB
+const GALLERY_FOLDER = 'dawood-ox/gallery' as const;
+const MAX_GALLERY_TITLE_LENGTH = 300;
+const MAX_GALLERY_DESCRIPTION_LENGTH = 2000;
+
+export interface GalleryVideoUploadSignature {
+  cloudName: string;
+  apiKey: string;
+  signature: string;
+  timestamp: number;
+  folder: typeof GALLERY_FOLDER;
+}
 
 /**
  * Helper to validate if a string is a valid 24-char hex MongoDB ObjectId
@@ -524,6 +535,312 @@ export async function deleteGalleryItem(id: string): Promise<{
     return { success: true };
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Failed to delete gallery item';
+    return { success: false, error: message };
+  }
+}
+
+/**
+ * Validate that a Cloudinary video URL uses HTTPS, res.cloudinary.com,
+ * and belongs to the expected cloud name under /video/upload/.
+ */
+function assertValidCloudinaryVideoUrl(urlString: string, expectedCloudName: string): URL {
+  let parsed: URL;
+  try {
+    parsed = new URL(urlString);
+  } catch {
+    throw new Error('Invalid Cloudinary video URL.');
+  }
+
+  if (parsed.protocol !== 'https:' || parsed.hostname !== 'res.cloudinary.com') {
+    throw new Error('Video URL must use HTTPS on res.cloudinary.com.');
+  }
+
+  if (parsed.username || parsed.password || parsed.port) {
+    throw new Error('Video URL contains invalid credentials or port.');
+  }
+
+  const expectedPrefix = `/${expectedCloudName}/video/upload/`;
+  if (!parsed.pathname.startsWith(expectedPrefix)) {
+    throw new Error('Video URL does not match the configured Cloudinary cloud or video upload path.');
+  }
+
+  return parsed;
+}
+
+/**
+ * Safely extract HTTP status and message from a Cloudinary Admin API error
+ * without logging or exposing raw request_options or credentials.
+ */
+function extractSanitizedCloudinaryAdminError(err: unknown): {
+  httpCode?: number;
+  message: string;
+} {
+  const errObj = (typeof err === 'object' && err !== null ? err : {}) as Record<string, unknown>;
+  const nestedErr = (
+    typeof errObj.error === 'object' && errObj.error !== null ? errObj.error : {}
+  ) as Record<string, unknown>;
+
+  const httpCode =
+    typeof nestedErr.http_code === 'number'
+      ? nestedErr.http_code
+      : typeof errObj.http_code === 'number'
+        ? errObj.http_code
+        : undefined;
+
+  const rawMessage =
+    typeof nestedErr.message === 'string' && nestedErr.message.trim()
+      ? nestedErr.message.trim()
+      : typeof errObj.message === 'string' && errObj.message.trim()
+        ? errObj.message.trim()
+        : err instanceof Error
+          ? err.message
+          : 'Cloudinary verification failed';
+
+  const sanitizedMessage = rawMessage
+    .replace(/\b(Basic|Bearer)\s+[A-Za-z0-9+/=._-]+/gi, '$1 [REDACTED]')
+    .replace(/\b(api_key|api_secret|signature)=([^\s&,'"]+)/gi, '$1=[REDACTED]');
+
+  return { httpCode, message: sanitizedMessage };
+}
+
+/**
+ * Generate short-lived signed upload parameters for direct browser-to-Cloudinary
+ * gallery video uploads (Super Admin only). Bypasses serverless payload limits
+ * while preserving signed server-side authentication and keeping API secret on server.
+ */
+export async function createGalleryVideoUploadSignature(input: {
+  fileSize: number;
+  fileType: string;
+}): Promise<{
+  success: boolean;
+  data?: GalleryVideoUploadSignature;
+  error?: string;
+}> {
+  try {
+    await requireSuperAdminSession();
+
+    if (!isCloudinaryConfigured()) {
+      throw new Error(
+        'Cloudinary environment variables (CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET) are missing or incomplete.'
+      );
+    }
+
+    const fileType = typeof input?.fileType === 'string' ? input.fileType.trim().toLowerCase() : '';
+    const fileSize = typeof input?.fileSize === 'number' ? input.fileSize : NaN;
+
+    if (!fileType.startsWith('video/')) {
+      throw new Error('Unsupported file type. Only video/* files are permitted for video upload.');
+    }
+
+    if (!Number.isFinite(fileSize) || fileSize <= 0) {
+      throw new Error('Video file is empty or has an invalid size.');
+    }
+
+    if (fileSize > MAX_VIDEO_SIZE_BYTES) {
+      throw new Error('Video file exceeds the 100MB limit.');
+    }
+
+    const cfg = cloudinary.config();
+    const cloudName = typeof cfg.cloud_name === 'string' ? cfg.cloud_name.trim() : '';
+    const apiKey = typeof cfg.api_key === 'string' ? cfg.api_key.trim() : '';
+    const apiSecret = typeof cfg.api_secret === 'string' ? cfg.api_secret.trim() : '';
+
+    if (!cloudName || !apiKey || !apiSecret) {
+      throw new Error('Cloudinary server configuration is incomplete.');
+    }
+
+    const timestamp = Math.round(Date.now() / 1000);
+    const paramsToSign = {
+      folder: GALLERY_FOLDER,
+      timestamp,
+    };
+
+    const signature = cloudinary.utils.api_sign_request(paramsToSign, apiSecret);
+
+    return {
+      success: true,
+      data: {
+        cloudName,
+        apiKey,
+        signature,
+        timestamp,
+        folder: GALLERY_FOLDER,
+      },
+    };
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Failed to generate video upload signature';
+    console.error('[createGalleryVideoUploadSignature Error]:', message);
+    return { success: false, error: message };
+  }
+}
+
+/**
+ * Verify a direct-to-Cloudinary uploaded video via Cloudinary's authenticated Admin API
+ * and persist the GalleryItem record in MongoDB (Super Admin only).
+ */
+export async function saveGalleryVideoItem(input: {
+  publicId: string;
+  secureUrl: string;
+  title?: string;
+  description?: string;
+}): Promise<{
+  success: boolean;
+  data?: IGalleryItem;
+  error?: string;
+}> {
+  try {
+    const userId = await requireSuperAdminSession();
+
+    if (!isCloudinaryConfigured()) {
+      throw new Error(
+        'Cloudinary environment variables (CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET) are missing or incomplete.'
+      );
+    }
+
+    const cfg = cloudinary.config();
+    const expectedCloudName = typeof cfg.cloud_name === 'string' ? cfg.cloud_name.trim() : '';
+    if (!expectedCloudName) {
+      throw new Error('Cloudinary cloud name is not configured on the server.');
+    }
+
+    const cleanPublicId = typeof input?.publicId === 'string' ? input.publicId.trim() : '';
+    const cleanSecureUrl = typeof input?.secureUrl === 'string' ? input.secureUrl.trim() : '';
+
+    if (!cleanPublicId || !cleanSecureUrl) {
+      throw new Error('Missing uploaded video identifier or URL.');
+    }
+
+    if (
+      cleanPublicId.length > 255 ||
+      cleanPublicId.startsWith('/') ||
+      cleanPublicId.endsWith('/') ||
+      cleanPublicId.includes('..') ||
+      cleanPublicId.includes('//') ||
+      !/^[a-zA-Z0-9_\-./]+$/.test(cleanPublicId)
+    ) {
+      throw new Error('Invalid Cloudinary public_id format.');
+    }
+
+    if (input.title !== undefined && typeof input.title !== 'string') {
+      throw new Error('Invalid gallery title.');
+    }
+    if (input.description !== undefined && typeof input.description !== 'string') {
+      throw new Error('Invalid gallery description.');
+    }
+
+    const cleanTitle = (input.title ?? '').trim();
+    const cleanDescription = (input.description ?? '').trim();
+
+    if (cleanTitle.length > MAX_GALLERY_TITLE_LENGTH) {
+      throw new Error(`Title must be ${MAX_GALLERY_TITLE_LENGTH} characters or fewer.`);
+    }
+    if (cleanDescription.length > MAX_GALLERY_DESCRIPTION_LENGTH) {
+      throw new Error(`Description must be ${MAX_GALLERY_DESCRIPTION_LENGTH} characters or fewer.`);
+    }
+
+    // Validate client-supplied URL strictly uses HTTPS and expected Cloudinary cloud
+    assertValidCloudinaryVideoUrl(cleanSecureUrl, expectedCloudName);
+
+    // Verify the uploaded asset directly through Cloudinary's authenticated Admin API
+    let assetRecord: Record<string, unknown>;
+    try {
+      assetRecord = (await cloudinary.api.resource(cleanPublicId, {
+        resource_type: 'video',
+        type: 'upload',
+      })) as Record<string, unknown>;
+    } catch (adminErr: unknown) {
+      const firstErr = extractSanitizedCloudinaryAdminError(adminErr);
+      if (firstErr.httpCode === 404) {
+        // Brief single retry in case of immediate post-upload propagation lag
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        try {
+          assetRecord = (await cloudinary.api.resource(cleanPublicId, {
+            resource_type: 'video',
+            type: 'upload',
+          })) as Record<string, unknown>;
+        } catch (retryErr: unknown) {
+          const retryInfo = extractSanitizedCloudinaryAdminError(retryErr);
+          console.error('[saveGalleryVideoItem Admin Verification Error]:', retryInfo);
+          throw new Error(
+            `Could not verify uploaded video in Cloudinary (HTTP ${retryInfo.httpCode ?? 'unknown'}): ${retryInfo.message}`
+          );
+        }
+      } else {
+        console.error('[saveGalleryVideoItem Admin Verification Error]:', firstErr);
+        throw new Error(
+          `Could not verify uploaded video in Cloudinary (HTTP ${firstErr.httpCode ?? 'unknown'}): ${firstErr.message}`
+        );
+      }
+    }
+
+    const verifiedPublicId =
+      typeof assetRecord.public_id === 'string' ? assetRecord.public_id.trim() : '';
+    const verifiedSecureUrl =
+      typeof assetRecord.secure_url === 'string' ? assetRecord.secure_url.trim() : '';
+    const verifiedResourceType =
+      typeof assetRecord.resource_type === 'string' ? assetRecord.resource_type.trim() : '';
+    const verifiedAssetFolder =
+      typeof assetRecord.asset_folder === 'string' ? assetRecord.asset_folder.trim() : '';
+    const verifiedFolder =
+      typeof assetRecord.folder === 'string' ? assetRecord.folder.trim() : '';
+    const verifiedBytes =
+      typeof assetRecord.bytes === 'number' ? assetRecord.bytes : undefined;
+
+    if (!verifiedPublicId || verifiedPublicId !== cleanPublicId) {
+      throw new Error('Cloudinary asset public_id verification mismatch.');
+    }
+
+    if (verifiedResourceType !== 'video') {
+      throw new Error('Verified Cloudinary asset is not a video.');
+    }
+
+    const inExpectedFolder =
+      verifiedPublicId.startsWith(`${GALLERY_FOLDER}/`) ||
+      verifiedAssetFolder === GALLERY_FOLDER ||
+      verifiedFolder === GALLERY_FOLDER;
+
+    if (!inExpectedFolder) {
+      throw new Error('Uploaded video is not located in the authorized gallery folder.');
+    }
+
+    if (!verifiedSecureUrl) {
+      throw new Error('Cloudinary asset verification did not return a secure_url.');
+    }
+
+    const parsedVerifiedUrl = assertValidCloudinaryVideoUrl(verifiedSecureUrl, expectedCloudName);
+    const parsedClientUrl = assertValidCloudinaryVideoUrl(cleanSecureUrl, expectedCloudName);
+
+    if (parsedVerifiedUrl.pathname !== parsedClientUrl.pathname) {
+      throw new Error('Uploaded video URL does not match the verified Cloudinary asset.');
+    }
+
+    if (verifiedBytes !== undefined && (verifiedBytes <= 0 || verifiedBytes > MAX_VIDEO_SIZE_BYTES)) {
+      throw new Error('Uploaded video size is invalid or exceeds the 100MB limit.');
+    }
+
+    await connectToDatabase();
+
+    const validUserId = isValidObjectId(userId) ? userId : null;
+
+    const newItem = await GalleryItem.create({
+      url: verifiedSecureUrl,
+      type: 'video',
+      title: cleanTitle,
+      description: cleanDescription,
+      publicId: verifiedPublicId,
+      createdBy: validUserId,
+    });
+
+    revalidatePath('/about');
+    revalidatePath('/admin/about');
+
+    return {
+      success: true,
+      data: JSON.parse(JSON.stringify(newItem.toObject())),
+    };
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Failed to save gallery video item';
+    console.error('[saveGalleryVideoItem Error]:', message);
     return { success: false, error: message };
   }
 }

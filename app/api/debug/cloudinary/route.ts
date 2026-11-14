@@ -30,7 +30,17 @@ function timingSafeHexMatch(actualHex: string, expectedHex: string): boolean {
 }
 
 function sanitizeCloudinaryText(text: string): string {
-  return text.replace(/\b(Invalid Signature[:\s]+)[a-fA-F0-9]{32,64}\b/gi, '$1[REDACTED]');
+  return text
+    .replace(/\b(Invalid Signature[:\s]+)[a-fA-F0-9]{32,64}\b/gi, '$1[REDACTED]')
+    .replace(/\b(Basic|Bearer)\s+[A-Za-z0-9+/=._-]+/gi, '$1 [REDACTED]')
+    .replace(/\b(api_key|api_secret|signature)=([^\s&,'"]+)/gi, '$1=[REDACTED]');
+}
+
+interface AdminApiPingDiagnostic {
+  success: boolean;
+  httpStatus: number | null;
+  error: string | null;
+  requestId: string | null;
 }
 
 /**
@@ -84,6 +94,12 @@ export async function POST(_req: NextRequest) {
           runtimeMatchesHistoricalSignature: false,
           liveUploadSuccess: false,
           cleanupSuccess: false,
+          adminApiPing: {
+            success: false,
+            httpStatus: null,
+            error: 'Skipped: Cloudinary environment variables missing or incomplete.',
+            requestId: null,
+          } satisfies AdminApiPingDiagnostic,
           configDiagnostics,
           error: 'Cloudinary environment variables (CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET) are missing or incomplete.',
         },
@@ -103,6 +119,58 @@ export async function POST(_req: NextRequest) {
       historicalComputedSignature,
       HISTORICAL_EXPECTED_SIGNATURE
     );
+
+    // 2b. Safe Admin API authentication check using shared Cloudinary SDK instance
+    let adminApiPing: AdminApiPingDiagnostic;
+    try {
+      const pingResult = (await cloudinary.api.ping()) as Record<string, unknown> | undefined;
+      const pingRequestId =
+        typeof pingResult?.request_id === 'string' && pingResult.request_id.trim()
+          ? pingResult.request_id.trim()
+          : null;
+
+      adminApiPing = {
+        success: true,
+        httpStatus: 200,
+        error: null,
+        requestId: pingRequestId,
+      };
+    } catch (pingErr: unknown) {
+      const errObj = (typeof pingErr === 'object' && pingErr !== null ? pingErr : {}) as Record<string, unknown>;
+      const nestedErr = (
+        typeof errObj.error === 'object' && errObj.error !== null ? errObj.error : {}
+      ) as Record<string, unknown>;
+
+      const httpStatus =
+        typeof nestedErr.http_code === 'number'
+          ? nestedErr.http_code
+          : typeof errObj.http_code === 'number'
+            ? errObj.http_code
+            : null;
+
+      const rawPingMessage =
+        typeof nestedErr.message === 'string'
+          ? nestedErr.message
+          : typeof errObj.message === 'string'
+            ? errObj.message
+            : pingErr instanceof Error
+              ? pingErr.message
+              : 'Cloudinary Admin API ping failed';
+
+      const pingRequestId =
+        typeof nestedErr.request_id === 'string' && nestedErr.request_id.trim()
+          ? nestedErr.request_id.trim()
+          : typeof errObj.request_id === 'string' && errObj.request_id.trim()
+            ? errObj.request_id.trim()
+            : null;
+
+      adminApiPing = {
+        success: false,
+        httpStatus,
+        error: sanitizeCloudinaryText(rawPingMessage),
+        requestId: pingRequestId,
+      };
+    }
 
     // 3. Prepare signed live test parameters without upload_preset
     const timestamp = Math.round(Date.now() / 1000);
@@ -194,6 +262,7 @@ export async function POST(_req: NextRequest) {
       runtimeMatchesHistoricalSignature,
       liveUploadSuccess: response.ok,
       cleanupSuccess,
+      adminApiPing,
       historicalSignatureCheck: {
         folder: HISTORICAL_FOLDER,
         timestamp: HISTORICAL_TIMESTAMP,
@@ -226,8 +295,9 @@ export async function POST(_req: NextRequest) {
     return NextResponse.json(report, { status: response.ok ? 200 : responseStatus });
 
   } catch (error: unknown) {
-    const msg = error instanceof Error ? error.message : 'Forensic diagnostic failed';
-    console.error('[Cloudinary Forensic Debug Error]:', error);
+    const rawMsg = error instanceof Error ? error.message : 'Forensic diagnostic failed';
+    const msg = sanitizeCloudinaryText(rawMsg);
+    console.error('[Cloudinary Forensic Debug Error]:', msg);
     return NextResponse.json({ error: 'Forensic diagnostic execution error', message: msg }, { status: 500 });
   }
 }

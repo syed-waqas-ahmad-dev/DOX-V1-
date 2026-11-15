@@ -155,11 +155,10 @@ export default function OrderConfirmationPage({ params }: OrderConfirmationProps
           </div>
         </div>
 
-        {/* Live Courier Transit Route on Interactive Map */}
+        {/* Courier Dispatch Route on Interactive Map */}
         <OrderTransitMap
-          destinationCity={
-            (order.shippingAddress as unknown as Record<string, string> | undefined)?.city || 'Lahore'
-          }
+          destinationCity={order.shippingAddress?.city || ''}
+          destinationCoordinates={order.shippingAddress?.coordinates || null}
           orderNumber={order.orderNumber}
           courierName={order.courier || 'TCS Express'}
           trackingNumber={order.trackingNumber}

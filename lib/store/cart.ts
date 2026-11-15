@@ -7,9 +7,12 @@
 
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
+import type { CreateOrderPayload } from '@/types';
 
 export interface CartStoreItem {
   productId: string;
+  variantId?: string;
+  variantSku?: string;
   name: string;
   nameUr: string;
   image: string;
@@ -20,6 +23,44 @@ export interface CartStoreItem {
   quantity: number;
   sku: string;
   weight: number;
+}
+
+/**
+ * Builds the authoritative checkout order items payload from persisted cart items.
+ * Preserves optional variantId and variantSku when present, supports legacy carts
+ * lacking variant identifiers, and strips client price/stock/generic sku fields.
+ */
+export function buildCheckoutOrderItems(
+  items: CartStoreItem[]
+): CreateOrderPayload['items'] {
+  return items.map((i) => {
+    const cleanVariantId = i.variantId?.trim();
+    const cleanVariantSku = i.variantSku?.trim();
+    return {
+      productId: i.productId,
+      ...(cleanVariantId ? { variantId: cleanVariantId } : {}),
+      ...(cleanVariantSku ? { variantSku: cleanVariantSku } : {}),
+      size: i.size,
+      color: i.color,
+      quantity: i.quantity,
+    };
+  });
+}
+
+const normCartAttr = (val?: string) => (val || '').trim().toLowerCase();
+
+function isSameCartLine(
+  existing: CartStoreItem,
+  target: { productId: string; size: string; color: string; variantId?: string }
+): boolean {
+  if (existing.productId !== target.productId) return false;
+  if (existing.variantId && target.variantId) {
+    return existing.variantId === target.variantId;
+  }
+  return (
+    normCartAttr(existing.size) === normCartAttr(target.size) &&
+    normCartAttr(existing.color) === normCartAttr(target.color)
+  );
 }
 
 interface CartState {
@@ -36,8 +77,8 @@ interface CartState {
   closeCart: () => void;
   toggleCart: () => void;
   addItem: (item: Omit<CartStoreItem, 'quantity'> & { quantity?: number }) => void;
-  removeItem: (productId: string, size: string, color: string) => void;
-  updateQuantity: (productId: string, size: string, color: string, quantity: number) => void;
+  removeItem: (productId: string, size: string, color: string, variantId?: string) => void;
+  updateQuantity: (productId: string, size: string, color: string, quantity: number, variantId?: string) => void;
   applyCoupon: (coupon: { code: string; discountAmount: number; type: string }) => void;
   removeCoupon: () => void;
   clearCart: () => void;
@@ -61,13 +102,25 @@ export const useCartStore = create<CartState>()(
       addItem: (item) => {
         const currentItems = get().items;
         const qtyToAdd = item.quantity || 1;
-        const existingIndex = currentItems.findIndex(
-          (i) => i.productId === item.productId && i.size === item.size && i.color === item.color
+        const existingIndex = currentItems.findIndex((i) =>
+          isSameCartLine(i, {
+            productId: item.productId,
+            size: item.size,
+            color: item.color,
+            variantId: item.variantId,
+          })
         );
 
         if (existingIndex > -1) {
           const updated = [...currentItems];
-          updated[existingIndex].quantity += qtyToAdd;
+          const prev = updated[existingIndex];
+          updated[existingIndex] = {
+            ...prev,
+            quantity: prev.quantity + qtyToAdd,
+            variantId: item.variantId || prev.variantId,
+            variantSku: item.variantSku || prev.variantSku,
+            sku: item.variantSku || item.sku || prev.sku,
+          };
           set({ items: updated, isOpen: true });
         } else {
           set({
@@ -77,22 +130,22 @@ export const useCartStore = create<CartState>()(
         }
       },
 
-      removeItem: (productId, size, color) => {
+      removeItem: (productId, size, color, variantId) => {
         set((state) => ({
           items: state.items.filter(
-            (i) => !(i.productId === productId && i.size === size && i.color === color)
+            (i) => !isSameCartLine(i, { productId, size, color, variantId })
           ),
         }));
       },
 
-      updateQuantity: (productId, size, color, quantity) => {
+      updateQuantity: (productId, size, color, quantity, variantId) => {
         if (quantity <= 0) {
-          get().removeItem(productId, size, color);
+          get().removeItem(productId, size, color, variantId);
           return;
         }
         set((state) => ({
           items: state.items.map((i) =>
-            i.productId === productId && i.size === size && i.color === color
+            isSameCartLine(i, { productId, size, color, variantId })
               ? { ...i, quantity }
               : i
           ),

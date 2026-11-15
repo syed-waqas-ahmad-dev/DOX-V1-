@@ -14,6 +14,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { Phone, Bike, ShieldCheck, MapPin, Wallet, PackageCheck } from 'lucide-react';
 import { formatPKR } from '@/lib/formatters/currency';
+import { resolveCityCoordinates, isValidCoordinatePair } from '@/lib/cities';
 import type { IDeliveryPartner } from '@/types';
 
 interface DeliveryPartnersMapInnerProps {
@@ -21,19 +22,6 @@ interface DeliveryPartnersMapInnerProps {
   selectedCity?: string;
   onSelectPartner?: (partner: IDeliveryPartner) => void;
 }
-
-const CITY_COORDINATES: Record<string, [number, number]> = {
-  Peshawar: [34.0151, 71.5249],
-  Lahore: [31.5204, 74.3587],
-  Islamabad: [33.6844, 73.0479],
-  Rawalpindi: [33.5651, 73.0169],
-  Karachi: [24.8607, 67.0011],
-  Faisalabad: [31.4504, 73.135],
-  Multan: [30.1575, 71.5249],
-  Sialkot: [32.4945, 74.5229],
-  Gujranwala: [32.1877, 74.1945],
-  Quetta: [30.1798, 66.975],
-};
 
 function getGpsFreshnessInfo(partner: IDeliveryPartner): {
   isFallback: boolean;
@@ -121,11 +109,11 @@ export default function DeliveryPartnersMapInner({
   onSelectPartner,
 }: DeliveryPartnersMapInnerProps) {
   const centerCoord = useMemo<[number, number]>(() => {
-    if (selectedCity && CITY_COORDINATES[selectedCity]) {
-      return CITY_COORDINATES[selectedCity];
+    if (selectedCity && selectedCity !== 'all') {
+      const resolved = resolveCityCoordinates(selectedCity);
+      if (resolved) return resolved;
     }
-    // Default to Peshawar or Lahore
-    return [32.5, 72.8];
+    return [30.3753, 69.3451];
   }, [selectedCity]);
 
   const zoomLevel = selectedCity && selectedCity !== 'all' ? 12 : 6;
@@ -145,13 +133,17 @@ export default function DeliveryPartnersMapInner({
         />
 
         {partners.map((partner) => {
-          const lat = partner.currentLat || CITY_COORDINATES[partner.city]?.[0] || 34.0151;
-          const lng = partner.currentLng || CITY_COORDINATES[partner.city]?.[1] || 71.5249;
+          const hasLiveCoords = isValidCoordinatePair(partner.currentLat, partner.currentLng);
+          const fallbackCoords = !hasLiveCoords ? resolveCityCoordinates(partner.city) : null;
+          const markerPos: [number, number] | null = hasLiveCoords
+            ? [partner.currentLat as number, partner.currentLng as number]
+            : fallbackCoords;
+          if (!markerPos) return null;
           const freshness = getGpsFreshnessInfo(partner);
           const icon = createRiderIcon(partner.name, freshness.dotHtml);
 
           return (
-            <Marker key={partner._id.toString()} position={[lat, lng]} icon={icon}>
+            <Marker key={partner._id.toString()} position={markerPos} icon={icon}>
               <Popup className="custom-rider-popup">
                 <div className="p-2 space-y-2 text-xs min-w-[220px] text-neutral-900 font-sans">
                   <div className="flex items-center justify-between border-b pb-1.5 gap-2">

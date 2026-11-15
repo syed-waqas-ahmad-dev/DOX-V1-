@@ -60,6 +60,25 @@ const deliveryAssignmentSchema = new Schema<IDeliveryAssignmentDocument, Deliver
       type: String,
       required: true,
     },
+    villageAddress: {
+      type: String,
+      trim: true,
+    },
+    postalCode: {
+      type: String,
+      trim: true,
+    },
+    deliveryCoordinates: {
+      type: new Schema(
+        {
+          lat: { type: Number, required: true, min: -90, max: 90 },
+          lng: { type: Number, required: true, min: -180, max: 180 },
+          source: { type: String, enum: ['manual_pin'], default: 'manual_pin' },
+        },
+        { _id: false }
+      ),
+      required: false,
+    },
     city: {
       type: String,
       required: true,

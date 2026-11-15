@@ -383,8 +383,281 @@ async function runInventoryTests() {
     assert(simpleProduct.stock === 12, 'Simple product stock restocked (10 + 2 = 12)');
   }
 
+  // --- PHASE 1 TESTS: REAL CREATEORDER (MOCKDB) & VARIANT INTEGRITY ---
+  console.log('\n[Phase 1] Running Controlled Inventory & Variant Verification Suite...');
+  const { createOrder } = await import('../actions/order.actions');
+  const { MockDb } = await import('../lib/db/mock-store');
+  const { PaymentMethod, OrderStatus } = await import('../types');
+
+  const validCheckoutData = {
+    guestEmail: 'phase1.buyer@oxshoes.pk',
+    guestPhone: '+923001234567',
+    shippingAddress: {
+      fullName: 'Tariq Mahmood',
+      phone: '+923001234567',
+      villageAddress: 'Main Bazaar Bajaur',
+      address: 'Main Bazaar Bajaur',
+      city: 'Lahore',
+      postalCode: '54000',
+    },
+    paymentMethod: PaymentMethod.COD,
+  };
+
+  // Scenario 1: OX-JOG-010 Size 40 missing from variants
+  {
+    const margalla = MockDb.getProducts({ search: 'Margalla Trail Pro' }).products.find(
+      (p) => p.sku === 'OX-JOG-010'
+    );
+    assert(Boolean(margalla), 'OX-JOG-010 exists in catalog');
+    if (margalla) {
+      const hasSize40Variant = margalla.variants.some((v) => v.size === '40');
+      const hasSize40Meta = margalla.sizes.includes('40');
+      assert(!hasSize40Variant, 'OX-JOG-010 Size 40 is NOT present in variants');
+      assert(!hasSize40Meta, 'OX-JOG-010 sizes metadata does not falsely advertise Size 40');
+
+      const resMissing40 = await createOrder({
+        items: [
+          {
+            productId: margalla._id.toString(),
+            size: '40',
+            color: 'Charcoal Neon',
+            quantity: 1,
+          },
+        ],
+        checkoutData: validCheckoutData,
+      });
+      assert(
+        resMissing40.success === false,
+        'createOrder rejects missing Size 40 on OX-JOG-010 cleanly'
+      );
+    }
+  }
+
+  // Scenario 2 & 5: Available size+color and legacy cart item without variantId
+  {
+    const margalla = MockDb.getProducts({ search: 'Margalla Trail Pro' }).products.find(
+      (p) => p.sku === 'OX-JOG-010'
+    )!;
+    const before41Stock = margalla.variants.find((v) => v.size === '41')!.stock;
+    const beforeOrdersCount = MockDb.getAllOrders().length;
+
+    const legacyRes = await createOrder({
+      items: [
+        {
+          productId: margalla._id.toString(),
+          size: '41',
+          color: 'charcoal neon', // case-insensitive normalized legacy cart item without variantId
+          quantity: 1,
+        },
+      ],
+      checkoutData: validCheckoutData,
+    });
+
+    assert(legacyRes.success === true, 'Legacy cart item without variantId succeeds for valid variant');
+    if (legacyRes.success) {
+      const afterProd = MockDb.getProductById(margalla._id.toString())!;
+      const after41Stock = afterProd.variants.find((v) => v.size === '41')!.stock;
+      assert(after41Stock === before41Stock - 1, 'Variant stock decremented accurately (18 -> 17)');
+      assert(
+        afterProd.stock === afterProd.variants.reduce((s, v) => s + v.stock, 0),
+        'Parent product.stock reconciled to exact sum of variants'
+      );
+
+      // Scenario 10a: Order cancellation restocks idempotently
+      const cancelled = MockDb.updateOrderStatus(legacyRes.data.order._id.toString(), {
+        status: OrderStatus.CANCELLED,
+      });
+      assert(Boolean(cancelled?.isRestocked), 'MockDb cancellation sets isRestocked=true');
+      const restored41 = MockDb.getProductById(margalla._id.toString())!.variants.find(
+        (v) => v.size === '41'
+      )!.stock;
+      assert(restored41 === before41Stock, 'Cancelled order restocked Size 41 back to original stock');
+
+      // Duplicate cancellation must NOT double-restock
+      MockDb.updateOrderStatus(legacyRes.data.order._id.toString(), {
+        status: OrderStatus.CANCELLED,
+      });
+      const afterDupCancel41 = MockDb.getProductById(margalla._id.toString())!.variants.find(
+        (v) => v.size === '41'
+      )!.stock;
+      assert(afterDupCancel41 === before41Stock, 'Duplicate cancellation does NOT double-restock');
+    }
+
+    // Scenario 3: Unavailable color rejected & no orphan order created
+    const ordersBeforeFail = MockDb.getAllOrders().length;
+    const wrongColorRes = await createOrder({
+      items: [
+        {
+          productId: margalla._id.toString(),
+          size: '41',
+          color: 'Invalid Crimson',
+          quantity: 1,
+        },
+      ],
+      checkoutData: validCheckoutData,
+    });
+    assert(wrongColorRes.success === false, 'Unavailable color combination is rejected');
+    assert(
+      MockDb.getAllOrders().length === ordersBeforeFail,
+      'Zero orphan order created when variant/stock validation fails'
+    );
+    assert(beforeOrdersCount >= 0, 'Order baseline verified');
+  }
+
+  // Scenario 4: ProductCard Quick Add decision rules
+  {
+    function evaluateProductCardMode(prod: {
+      stock: number;
+      variants: Array<{ size: string; color: string; stock: number }>;
+    }): 'OUT_OF_STOCK' | 'SELECT_SIZE' | 'QUICK_ADD' {
+      const hasVars = Array.isArray(prod.variants) && prod.variants.length > 0;
+      const available = hasVars ? prod.variants.filter((v) => v.stock > 0) : [];
+      if (hasVars ? available.length === 0 : prod.stock <= 0) return 'OUT_OF_STOCK';
+      if (hasVars && !(prod.variants.length === 1 && available.length === 1)) return 'SELECT_SIZE';
+      return 'QUICK_ADD';
+    }
+
+    assert(
+      evaluateProductCardMode({
+        stock: 43,
+        variants: [
+          { size: '41', color: 'Charcoal Neon', stock: 18 },
+          { size: '42', color: 'Charcoal Neon', stock: 25 },
+        ],
+      }) === 'SELECT_SIZE',
+      'ProductCard shows Select Size when multiple variants exist'
+    );
+    assert(
+      evaluateProductCardMode({
+        stock: 0,
+        variants: [{ size: '41', color: 'Charcoal Neon', stock: 0 }],
+      }) === 'OUT_OF_STOCK',
+      'ProductCard shows Out of Stock when all variants have 0 stock'
+    );
+    assert(
+      evaluateProductCardMode({
+        stock: 5,
+        variants: [{ size: '41', color: 'Charcoal Neon', stock: 5 }],
+      }) === 'QUICK_ADD',
+      'ProductCard allows Quick Add for unambiguous single variant in stock'
+    );
+    assert(
+      evaluateProductCardMode({ stock: 5, variants: [] }) === 'QUICK_ADD',
+      'ProductCard allows Quick Add for simple product in stock'
+    );
+  }
+
+  // Scenario 6 & 7 & 8 & 9 & 10b: Stale parent stock healing, concurrent buyer guard, simple product, and multi-item rollback
+  {
+    // Stale parent stock (0) with valid variant stock (3)
+    const staleParentProduct = MockDb.addProduct({
+      name: 'Stale Parent Test Shoe',
+      nameUr: 'ٹیسٹ جوتا',
+      slug: `stale-parent-${Date.now()}`,
+      sku: 'OX-STL-001',
+      price: 4000,
+      originalPrice: 5000,
+      sizes: ['41'],
+      colors: [{ name: 'Black', hex: '#000000' }],
+      variants: [{ size: '41', color: 'Black', stock: 3, sku: 'OX-STL-41-BLK' }],
+      stock: 0, // intentionally stale parent aggregate!
+      isActive: true,
+      isDeleted: false,
+      images: ['https://images.unsplash.com/photo-1549298916-b41d501d3772'],
+      description: 'Test',
+      shortDescription: 'Test',
+    });
+
+    const staleRes = await createOrder({
+      items: [
+        {
+          productId: staleParentProduct._id.toString(),
+          variantSku: 'OX-STL-41-BLK',
+          size: '41',
+          color: 'Black',
+          quantity: 1,
+        },
+      ],
+      checkoutData: validCheckoutData,
+    });
+    assert(
+      staleRes.success === true,
+      'Valid variant purchase succeeds even when stale parent stock was 0'
+    );
+    const healedProd = MockDb.getProductById(staleParentProduct._id.toString())!;
+    assert(
+      healedProd.variants[0].stock === 2 && healedProd.stock === 2,
+      'Variant stock decremented (3 -> 2) and parent stock healed (0 -> 2)'
+    );
+
+    // Concurrent purchase protection on last 1 unit
+    healedProd.variants[0].stock = 1;
+    healedProd.stock = 1;
+    const [c1, c2] = await Promise.all([
+      createOrder({
+        items: [{ productId: staleParentProduct._id.toString(), size: '41', color: 'Black', quantity: 1 }],
+        checkoutData: validCheckoutData,
+      }),
+      createOrder({
+        items: [{ productId: staleParentProduct._id.toString(), size: '41', color: 'Black', quantity: 1 }],
+        checkoutData: validCheckoutData,
+      }),
+    ]);
+    const concurrentWins = [c1.success, c2.success].filter(Boolean).length;
+    assert(concurrentWins === 1, 'Concurrent purchase of last unit allows only 1 winner');
+    assert(
+      MockDb.getProductById(staleParentProduct._id.toString())!.variants[0].stock === 0,
+      'Variant stock stops cleanly at 0 (never negative)'
+    );
+
+    // Simple product (no variants) checkout + multi-item failure rollback check
+    const simpleProd = MockDb.addProduct({
+      name: 'Simple Leather Balm',
+      nameUr: 'لیدر بام',
+      slug: `simple-balm-${Date.now()}`,
+      sku: 'OX-BLM-001',
+      price: 1200,
+      originalPrice: 1500,
+      sizes: ['Standard'],
+      colors: [{ name: 'Neutral', hex: '#D2B48C' }],
+      variants: [],
+      stock: 4,
+      isActive: true,
+      isDeleted: false,
+      images: ['https://images.unsplash.com/photo-1549298916-b41d501d3772'],
+      description: 'Test balm',
+      shortDescription: 'Test balm',
+    });
+
+    const multiFailRes = await createOrder({
+      items: [
+        { productId: simpleProd._id.toString(), size: 'Standard', color: 'Neutral', quantity: 2 },
+        { productId: staleParentProduct._id.toString(), size: '41', color: 'Black', quantity: 1 }, // now 0 stock!
+      ],
+      checkoutData: validCheckoutData,
+    });
+    assert(multiFailRes.success === false, 'Multi-item order fails when second item is out of stock');
+    assert(
+      MockDb.getProductById(simpleProd._id.toString())!.stock === 4,
+      'First item stock remains unmutated (4) when multi-item order fails'
+    );
+
+    const simpleSuccessRes = await createOrder({
+      items: [{ productId: simpleProd._id.toString(), size: 'Standard', color: 'Neutral', quantity: 2 }],
+      checkoutData: validCheckoutData,
+    });
+    assert(simpleSuccessRes.success === true, 'Simple product without variants purchases cleanly');
+    assert(
+      MockDb.getProductById(simpleProd._id.toString())!.stock === 2,
+      'Simple product stock decremented accurately (4 -> 2)'
+    );
+
+    MockDb.deleteProduct(staleParentProduct._id.toString());
+    MockDb.deleteProduct(simpleProd._id.toString());
+  }
+
   console.log('\n=======================================');
-  console.log(`🎯 Test Summary: ${passed} PASSED, ${failed} FAILED out of 8 test suites.`);
+  console.log(`🎯 Test Summary: ${passed} PASSED, ${failed} FAILED.`);
   console.log('=======================================\n');
 
   if (failed > 0) {

@@ -85,7 +85,13 @@ export async function getAdminMetrics(): Promise<ActionResult<AdminDashboardMetr
     const [orders, totalProducts, lowStockProducts, totalCustomers] = await Promise.all([
       Order.find().sort({ createdAt: -1 }).limit(200).lean(),
       Product.countDocuments({ isDeleted: { $ne: true } }),
-      Product.countDocuments({ stock: { $lte: 5 }, isDeleted: { $ne: true } }),
+      Product.countDocuments({
+        isDeleted: { $ne: true },
+        $or: [
+          { 'variants.0': { $exists: false }, stock: { $lte: 5 } },
+          { variants: { $elemMatch: { stock: { $lte: 5 } } } },
+        ],
+      }),
       User.countDocuments({ isDeleted: { $ne: true } }),
     ]);
 

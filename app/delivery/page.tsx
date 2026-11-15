@@ -29,6 +29,7 @@ import {
 import { formatPKR } from '@/lib/formatters/currency';
 import { formatDate } from '@/lib/formatters/date';
 import { generateCustomerWhatsAppUrl } from '@/lib/whatsapp';
+import { resolveCityCoordinates, isValidCoordinatePair } from '@/lib/cities';
 import {
   Bike,
   Phone,
@@ -739,9 +740,27 @@ export default function RiderTerminalPage() {
                   assignment.customerPhone,
                   `Assalam-o-Alaikum ${assignment.customerName}, I am ${partner.name} from Bajaur OX Shoes. I am delivering your order ${assignment.orderNumber} for PKR ${assignment.codAmount?.toLocaleString()}. Are you available at your address?`
                 );
-                const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-                  `${assignment.deliveryAddress}, ${assignment.city}`
-                )}`;
+                const hasSavedCoords = Boolean(
+                  assignment.deliveryCoordinates &&
+                    isValidCoordinatePair(
+                      assignment.deliveryCoordinates.lat,
+                      assignment.deliveryCoordinates.lng
+                    )
+                );
+                const approxCityCoords = !hasSavedCoords
+                  ? resolveCityCoordinates(assignment.city)
+                  : null;
+                const addressQuery = [assignment.deliveryAddress, assignment.city]
+                  .filter(Boolean)
+                  .join(', ');
+                const mapsUrl =
+                  hasSavedCoords && assignment.deliveryCoordinates
+                    ? `https://www.google.com/maps/search/?api=1&query=${assignment.deliveryCoordinates.lat},${assignment.deliveryCoordinates.lng}`
+                    : addressQuery
+                    ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addressQuery)}`
+                    : approxCityCoords
+                    ? `https://www.google.com/maps/search/?api=1&query=${approxCityCoords[0]},${approxCityCoords[1]}`
+                    : null;
 
                 return (
                   <div
@@ -816,7 +835,14 @@ export default function RiderTerminalPage() {
 
                       <div className="flex items-start gap-1.5 text-neutral-300">
                         <MapPin className="h-3.5 w-3.5 text-amber-400 shrink-0 mt-0.5" />
-                        <span className="leading-tight">{assignment.deliveryAddress}</span>
+                        <div className="leading-tight space-y-0.5">
+                          <span className="block">{assignment.deliveryAddress}</span>
+                          {hasSavedCoords && assignment.deliveryCoordinates && (
+                            <span className="text-[10px] font-mono text-emerald-400 block">
+                              Pinned GPS: {assignment.deliveryCoordinates.lat.toFixed(4)}, {assignment.deliveryCoordinates.lng.toFixed(4)}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
 
@@ -829,15 +855,21 @@ export default function RiderTerminalPage() {
                         </span>
                       </div>
 
-                      <a
-                        href={mapsUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-xs font-bold flex items-center gap-1 border border-neutral-700"
-                      >
-                        <Navigation className="h-3.5 w-3.5 text-amber-400" />
-                        <span>Navigate</span>
-                      </a>
+                      {mapsUrl ? (
+                        <a
+                          href={mapsUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-xs font-bold flex items-center gap-1 border border-neutral-700"
+                        >
+                          <Navigation className="h-3.5 w-3.5 text-amber-400" />
+                          <span>{hasSavedCoords ? 'Navigate (Pin)' : 'Navigate'}</span>
+                        </a>
+                      ) : (
+                        <span className="px-3 py-1.5 rounded-xl bg-neutral-900 text-neutral-500 text-[11px] font-medium border border-neutral-800">
+                          Location Unresolved
+                        </span>
+                      )}
                     </div>
 
                     {/* Workflow Step Actions */}

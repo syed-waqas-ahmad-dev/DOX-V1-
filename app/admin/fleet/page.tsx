@@ -6,7 +6,7 @@ import { connectToDatabase } from '@/lib/db/connect';
 import { DeliveryPartner } from '@/models/DeliveryPartner';
 import { Order } from '@/models/Order';
 import { OrderStatus } from '@/types';
-import { CITY_COORDINATES } from '@/lib/cities';
+import { resolveCityCoordinates, isValidCoordinatePair } from '@/lib/cities';
 import MapComponent from './FleetMapClient';
 import { formatPKR } from '@/lib/formatters/currency';
 import { formatDate } from '@/lib/formatters/date';
@@ -64,17 +64,21 @@ export default async function FleetDispatchPage() {
   // Fetch all active delivery partners/riders using DeliveryPartner model
   const riders = await DeliveryPartner.find({ isDeleted: false }).lean();
 
-  // Create map markers with GPS or city center fallback
-  const markers = riders.map((rider) => {
-    const position: [number, number] =
-      rider.currentLat && rider.currentLng
-        ? [rider.currentLat, rider.currentLng]
-        : CITY_COORDINATES[rider.city] || CITY_COORDINATES['Peshawar'];
+  // Create map markers with GPS or city center fallback (no arbitrary Peshawar fallback)
+  const markers = riders.flatMap((rider) => {
+    const position: [number, number] | null =
+      isValidCoordinatePair(rider.currentLat, rider.currentLng)
+        ? [rider.currentLat as number, rider.currentLng as number]
+        : resolveCityCoordinates(rider.city);
 
-    return {
-      position,
-      popupContent: `${rider.name} - ${rider.phone} - ${rider.city} - Load: ${rider.currentLoad ?? 0}`,
-    };
+    if (!position) return [];
+
+    return [
+      {
+        position,
+        popupContent: `${rider.name} - ${rider.phone} - ${rider.city} - Load: ${rider.currentLoad ?? 0}`,
+      },
+    ];
   });
 
   // Fetch unassigned / pending orders for dispatch table

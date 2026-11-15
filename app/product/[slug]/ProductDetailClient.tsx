@@ -18,7 +18,6 @@ import { SearchModal } from '@/components/layout/SearchModal';
 import { createReviewAction } from '@/actions/review.actions';
 import { useCartStore } from '@/lib/store/cart';
 import { useWishlistStore } from '@/lib/store/wishlist';
-import { useRecentlyViewedStore } from '@/lib/store/recently-viewed';
 import { useLocale } from '@/lib/store/locale';
 import { useHydrated } from '@/lib/hooks/useHydrated';
 import { formatPKR } from '@/lib/formatters/currency';
@@ -43,10 +42,51 @@ interface ProductDetailClientProps {
 }
 
 export function ProductDetailClient({ initialProduct: product, initialReviews }: ProductDetailClientProps) {
-  const [reviews, setReviews] = useState<IReview[]>(initialReviews);
+  const normAttr = (val?: string) => (val || '').trim().toLowerCase();
+  const hasVariants = Array.isArray(product.variants) && product.variants.length > 0;
+
+  const findMatchingVariant = (size: string, color: string) => {
+    if (!hasVariants) return undefined;
+    const normSize = normAttr(size);
+    const normColor = normAttr(color);
+    return product.variants.find(
+      (v) =>
+        normAttr(v.size) === normSize &&
+        (!normColor || normAttr(v.color) === normColor)
+    );
+  };
+
+  const getInitialSelection = () => {
+    const firstColor = product.colors?.[0]?.name || product.variants?.[0]?.color || 'Standard';
+    const firstSize = product.sizes?.[0] || product.variants?.[0]?.size || '';
+
+    if (!hasVariants) {
+      return { size: firstSize, color: firstColor };
+    }
+
+    const defaultMatch = product.variants.find(
+      (v) =>
+        normAttr(v.size) === normAttr(firstSize) &&
+        normAttr(v.color) === normAttr(firstColor) &&
+        (v.stock || 0) > 0
+    );
+    if (defaultMatch) {
+      return { size: defaultMatch.size, color: defaultMatch.color };
+    }
+
+    const firstAvailable = product.variants.find((v) => (v.stock || 0) > 0);
+    if (firstAvailable) {
+      return { size: firstAvailable.size, color: firstAvailable.color };
+    }
+
+    return { size: firstSize, color: firstColor };
+  };
+
+  const [initialSelection] = useState(getInitialSelection);
+  const [reviews] = useState<IReview[]>(initialReviews);
   const [selectedImage, setSelectedImage] = useState<string>(product.images?.[0] || '');
-  const [selectedSize, setSelectedSize] = useState<string>(product.sizes?.[0] || '41');
-  const [selectedColor, setSelectedColor] = useState<string>(product.colors?.[0]?.name || 'Standard');
+  const [selectedSize, setSelectedSize] = useState<string>(initialSelection.size);
+  const [selectedColor, setSelectedColor] = useState<string>(initialSelection.color);
   const [searchModalOpen, setSearchModalOpen] = useState(false);
   const [sizeGuideOpen, setSizeGuideOpen] = useState(false);
 
@@ -67,17 +107,43 @@ export function ProductDetailClient({ initialProduct: product, initialReviews }:
 
   const isSaved = isHydrated && isInWishlist(product._id.toString());
 
+  const totalAvailableStock = hasVariants
+    ? product.variants.reduce((sum, v) => sum + Math.max(0, v.stock || 0), 0)
+    : Math.max(0, product.stock || 0);
+
+  const activeVariant = findMatchingVariant(selectedSize, selectedColor);
+  const currentVariantStock = hasVariants
+    ? (activeVariant?.stock ?? 0)
+    : Math.max(0, product.stock || 0);
+
+  const displaySizes = (() => {
+    const list: string[] = [...(product.sizes || [])];
+    if (hasVariants) {
+      for (const v of product.variants) {
+        if (v.size && !list.some((s) => normAttr(s) === normAttr(v.size))) {
+          list.push(v.size);
+        }
+      }
+    }
+    return list;
+  })();
+
   const handleAddToCart = () => {
+    if (currentVariantStock <= 0) return;
+    if (hasVariants && !activeVariant) return;
+
     addItem({
       productId: product._id.toString(),
+      variantId: activeVariant?._id?.toString(),
+      variantSku: activeVariant?.sku,
       name: product.name,
       nameUr: product.nameUr,
       image: selectedImage || product.images[0] || '',
-      size: selectedSize,
-      color: selectedColor,
+      size: activeVariant?.size || selectedSize,
+      color: activeVariant?.color || selectedColor,
       price: product.price,
       originalPrice: product.originalPrice,
-      sku: product.sku,
+      sku: activeVariant?.sku || product.sku,
       weight: product.weight || 750,
       quantity: 1,
     });
@@ -186,7 +252,11 @@ export function ProductDetailClient({ initialProduct: product, initialReviews }:
             <div>
               <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-neutral-500 mb-1">
                 <span>{product.brand || 'Bajaur OX Shoes'} • {product.subCategory}</span>
-                <span className="text-emerald-600 font-black">In Stock</span>
+                {totalAvailableStock > 0 ? (
+                  <span className="text-emerald-600 font-black">In Stock</span>
+                ) : (
+                  <span className="text-red-600 font-black">Out of Stock</span>
+                )}
               </div>
 
               <h1 className="text-2xl sm:text-3xl font-black text-neutral-950 uppercase tracking-tight">
@@ -244,21 +314,30 @@ export function ProductDetailClient({ initialProduct: product, initialReviews }:
                 <div className="flex justify-between text-xs font-bold text-neutral-900">
                   <span>Selected Color: <strong className="text-neutral-600">{selectedColor}</strong></span>
                 </div>
-                <div className="flex items-center gap-2.5">
-                  {product.colors.map((c) => (
-                    <button
-                      key={c.name}
-                      onClick={() => setSelectedColor(c.name)}
-                      className={`h-9 px-3 rounded-full border text-xs font-bold flex items-center gap-2 transition-all ${
-                        selectedColor === c.name
-                          ? 'border-neutral-950 bg-neutral-950 text-white shadow'
-                          : 'border-neutral-300 hover:border-neutral-400 text-neutral-800'
-                      }`}
-                    >
-                      <span className="h-3 w-3 rounded-full border border-white/40 shrink-0" style={{ backgroundColor: c.hex }} />
-                      <span>{c.name}</span>
-                    </button>
-                  ))}
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  {product.colors.map((c) => {
+                    const colorHasStock = !hasVariants || product.variants.some(
+                      (v) => normAttr(v.color) === normAttr(c.name) && (v.stock || 0) > 0
+                    );
+                    return (
+                      <button
+                        key={c.name}
+                        type="button"
+                        onClick={() => setSelectedColor(c.name)}
+                        title={colorHasStock ? c.name : `${c.name} (Out of Stock)`}
+                        className={`h-9 px-3 rounded-full border text-xs font-bold flex items-center gap-2 transition-all ${
+                          selectedColor === c.name
+                            ? 'border-neutral-950 bg-neutral-950 text-white shadow'
+                            : colorHasStock
+                            ? 'border-neutral-300 hover:border-neutral-400 text-neutral-800'
+                            : 'border-neutral-200 bg-neutral-100 text-neutral-400'
+                        }`}
+                      >
+                        <span className="h-3 w-3 rounded-full border border-white/40 shrink-0" style={{ backgroundColor: c.hex }} />
+                        <span>{c.name}</span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -277,12 +356,13 @@ export function ProductDetailClient({ initialProduct: product, initialReviews }:
               </div>
 
               <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
-                {product.sizes.map((sz) => {
-                  const match = product.variants?.find(
-                    (v) => v.size.trim().toLowerCase() === sz.trim().toLowerCase()
-                  );
-                  const szStock = match ? match.stock : (product.variants && product.variants.length > 0 ? 0 : product.stock);
+                {displaySizes.map((sz) => {
+                  const match = findMatchingVariant(sz, selectedColor);
+                  const szStock = hasVariants
+                    ? (match?.stock ?? 0)
+                    : Math.max(0, product.stock || 0);
                   const isSoldOut = szStock <= 0;
+                  const isSelected = normAttr(selectedSize) === normAttr(sz);
 
                   return (
                     <button
@@ -290,10 +370,16 @@ export function ProductDetailClient({ initialProduct: product, initialReviews }:
                       type="button"
                       disabled={isSoldOut}
                       onClick={() => setSelectedSize(sz)}
-                      title={isSoldOut ? `Size ${sz} (Sold Out)` : `Size ${sz} (${szStock} in stock)`}
+                      title={
+                        isSoldOut
+                          ? `Size ${sz}${selectedColor ? ` (${selectedColor})` : ''} (Sold Out)`
+                          : `Size ${sz}${selectedColor ? ` (${selectedColor})` : ''} (${szStock} in stock)`
+                      }
                       className={`py-3 rounded-xl border text-xs font-bold transition-all text-center relative ${
-                        selectedSize === sz
+                        isSelected && !isSoldOut
                           ? 'border-neutral-950 bg-neutral-950 text-white shadow'
+                          : isSelected && isSoldOut
+                          ? 'border-red-300 bg-red-50 text-red-400 cursor-not-allowed line-through'
                           : isSoldOut
                           ? 'border-neutral-200 bg-neutral-100 text-neutral-400 cursor-not-allowed line-through'
                           : 'border-neutral-200 hover:border-neutral-400 text-neutral-800'
@@ -309,33 +395,26 @@ export function ProductDetailClient({ initialProduct: product, initialReviews }:
               {selectedSize && (
                 <div className="text-xs pt-1">
                   {(() => {
-                    const match = product.variants?.find(
-                      (v) => v.size.trim().toLowerCase() === selectedSize.trim().toLowerCase()
-                    );
-                    const currentStock = match
-                      ? match.stock
-                      : (product.variants && product.variants.length > 0 ? 0 : product.stock);
-
-                    if (currentStock <= 0) {
+                    if (currentVariantStock <= 0) {
                       return (
                         <p className="text-red-600 font-semibold flex items-center gap-1.5">
                           <span className="h-2 w-2 rounded-full bg-red-500" />
-                          Size {selectedSize} is currently Out of Stock
+                          Size {selectedSize}{selectedColor ? ` (${selectedColor})` : ''} is currently Out of Stock
                         </p>
                       );
                     }
-                    if (currentStock <= 5) {
+                    if (currentVariantStock <= 5) {
                       return (
                         <p className="text-amber-600 font-semibold flex items-center gap-1.5">
                           <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
-                          Low stock: Only {currentStock} pair{currentStock > 1 ? 's' : ''} left in Size {selectedSize}!
+                          Low stock: Only {currentVariantStock} pair{currentVariantStock > 1 ? 's' : ''} left in Size {selectedSize}!
                         </p>
                       );
                     }
                     return (
                       <p className="text-emerald-700 font-medium flex items-center gap-1.5">
                         <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                        In Stock for Size {selectedSize} ({currentStock} available)
+                        In Stock for Size {selectedSize}{selectedColor ? ` (${selectedColor})` : ''} ({currentVariantStock} available)
                       </p>
                     );
                   })()}
@@ -362,13 +441,7 @@ export function ProductDetailClient({ initialProduct: product, initialReviews }:
             {/* CTAs */}
             <div className="flex items-center gap-3 pt-2">
               {(() => {
-                const match = product.variants?.find(
-                  (v) => v.size.trim().toLowerCase() === selectedSize.trim().toLowerCase()
-                );
-                const currentStock = match
-                  ? match.stock
-                  : (product.variants && product.variants.length > 0 ? 0 : product.stock);
-                const isSoldOut = currentStock <= 0;
+                const isSoldOut = currentVariantStock <= 0 || (hasVariants && !activeVariant);
 
                 return (
                   <button

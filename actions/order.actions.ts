@@ -8,7 +8,7 @@
  * Strict TypeScript: ZERO `any`.
  */
 
-import { connectToDatabase, isDatabaseConnected } from '@/lib/db/connect';
+import { canUseMockDatabase, connectToDatabase, isDatabaseConnected } from '@/lib/db/connect';
 import { Order } from '@/models/Order';
 import { Product } from '@/models/Product';
 import { Coupon } from '@/models/Coupon';
@@ -22,7 +22,8 @@ import { COD_MAX_LIMIT_WITHOUT_OTP } from '@/lib/constants';
 import { MockDb } from '@/lib/db/mock-store';
 import { Notification } from '@/models/Notification';
 import { OrderStatus, PaymentMethod, PaymentStatus, Courier, type IOrder, type IOrderItem, NotificationType, type CreateOrderPayload, UserRole, Department } from '@/types';
-import { Types } from 'mongoose';
+import { isValidCoordinatePair } from '@/lib/cities';
+import mongoose, { Types } from 'mongoose';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { isElevatedAdminRole, isAdminRole, verifyDepartmentAuth } from '@/lib/auth-guard';
@@ -34,39 +35,352 @@ import type { ITrackOrderDTO } from '@/types';
 import { generateVerificationToken, getInvoiceVerificationToken } from '@/lib/invoice';
 import { rateLimit } from '@/lib/rate-limit';
 
+interface VariantCandidate {
+  _id?: Types.ObjectId | string;
+  size: string;
+  color: string;
+  stock: number;
+  sku: string;
+}
+
+interface ResolvedOrderVariant {
+  isSimpleProduct: boolean;
+  variantId?: Types.ObjectId | string;
+  size: string;
+  color: string;
+  sku: string;
+  stock: number;
+}
+
+const normVariantAttr = (val?: string) => (val || '').trim().toLowerCase();
+
+/**
+ * Atomically adjusts a single variant's stock AND recalculates the parent product's
+ * aggregate `stock` as the exact server-side sum of all `variants[].stock` in a
+ * single MongoDB document write (eliminating stale read-snapshot overwrites under
+ * concurrent orders or restocking operations).
+ */
+async function applyAtomicVariantStockDelta(params: {
+  productId: Types.ObjectId | string;
+  variantId?: Types.ObjectId | string;
+  sku: string;
+  delta: number;
+  session?: mongoose.ClientSession;
+}) {
+  const { productId, variantId, sku, delta, session } = params;
+  const normalizedVariantId =
+    variantId && Types.ObjectId.isValid(variantId.toString())
+      ? new Types.ObjectId(variantId.toString())
+      : variantId;
+
+  const elemMatch: Record<string, unknown> = variantId
+    ? { _id: normalizedVariantId, ...(delta < 0 ? { stock: { $gte: Math.abs(delta) } } : {}) }
+    : { sku, ...(delta < 0 ? { stock: { $gte: Math.abs(delta) } } : {}) };
+
+  const matchExpr = variantId
+    ? { $eq: ['$$v._id', normalizedVariantId] }
+    : { $eq: ['$$v.sku', sku] };
+
+  return Product.findOneAndUpdate(
+    {
+      _id: productId,
+      variants: { $elemMatch: elemMatch },
+    },
+    [
+      {
+        $set: {
+          variants: {
+            $map: {
+              input: '$variants',
+              as: 'v',
+              in: {
+                $cond: [
+                  matchExpr,
+                  {
+                    $mergeObjects: [
+                      '$$v',
+                      {
+                        stock: {
+                          $max: [0, { $add: [{ $ifNull: ['$$v.stock', 0] }, delta] }],
+                        },
+                      },
+                    ],
+                  },
+                  '$$v',
+                ],
+              },
+            },
+          },
+        },
+      },
+      {
+        $set: {
+          stock: {
+            $reduce: {
+              input: '$variants',
+              initialValue: 0,
+              in: {
+                $add: ['$$value', { $max: [0, { $ifNull: ['$$this.stock', 0] }] }],
+              },
+            },
+          },
+        },
+      },
+    ],
+    {
+      session: session || undefined,
+      returnDocument: 'after',
+      updatePipeline: true,
+    }
+  );
+}
+
+function resolveOrderProductVariant(
+  product: {
+    name: string;
+    sku: string;
+    stock: number;
+    variants?: VariantCandidate[];
+  },
+  item: {
+    variantId?: string;
+    variantSku?: string;
+    sku?: string;
+    size?: string;
+    color?: string;
+  },
+  mode: 'checkout' | 'restock'
+): { resolved?: ResolvedOrderVariant; error?: string } {
+  const variants = Array.isArray(product.variants) ? product.variants : [];
+
+  if (variants.length === 0) {
+    const cleanSize = (item.size || 'Standard').trim();
+    const cleanColor = (item.color || 'Standard').trim();
+    return {
+      resolved: {
+        isSimpleProduct: true,
+        size: cleanSize,
+        color: cleanColor,
+        sku:
+          item.sku?.trim() ||
+          `${product.sku}-${cleanSize}-${cleanColor.slice(0, 3).toUpperCase()}`,
+        stock: Math.max(0, product.stock || 0),
+      },
+    };
+  }
+
+  const normSize = normVariantAttr(item.size);
+  const normColor = normVariantAttr(item.color);
+  let matched: VariantCandidate | undefined;
+
+  if (item.variantId && item.variantId.trim()) {
+    const targetId = item.variantId.trim();
+    matched = variants.find((v) => v._id?.toString() === targetId);
+    if (!matched) {
+      return {
+        error: `Selected variant is no longer available for "${product.name}".`,
+      };
+    }
+    if (normSize && normVariantAttr(matched.size) !== normSize) {
+      return {
+        error: `Variant size mismatch for "${product.name}" (Size ${item.size}).`,
+      };
+    }
+    if (normColor && normVariantAttr(matched.color) !== normColor) {
+      return {
+        error: `Variant color mismatch for "${product.name}" (${item.color}).`,
+      };
+    }
+  } else if (
+    (item.variantSku && item.variantSku.trim()) ||
+    (mode === 'restock' && item.sku && item.sku.trim())
+  ) {
+    const targetSku = (item.variantSku || item.sku || '').trim().toUpperCase();
+    matched = variants.find((v) => (v.sku || '').trim().toUpperCase() === targetSku);
+    if (matched && mode === 'checkout') {
+      if (normSize && normVariantAttr(matched.size) !== normSize) {
+        return {
+          error: `Variant size mismatch for "${product.name}" (Size ${item.size}).`,
+        };
+      }
+      if (normColor && normVariantAttr(matched.color) !== normColor) {
+        return {
+          error: `Variant color mismatch for "${product.name}" (${item.color}).`,
+        };
+      }
+    }
+  }
+
+  // Fallback / legacy resolution using normalized (size, color)
+  if (!matched && normSize) {
+    const sizeMatches = variants.filter((v) => normVariantAttr(v.size) === normSize);
+    if (normColor) {
+      matched = sizeMatches.find((v) => normVariantAttr(v.color) === normColor);
+    } else if (sizeMatches.length === 1) {
+      matched = sizeMatches[0];
+    } else if (sizeMatches.length > 1) {
+      if (mode === 'restock') {
+        return {
+          error: `Ambiguous legacy order restocking: Size "${item.size}" has multiple color variants for "${product.name}". Please specify variant identity.`,
+        };
+      }
+      return {
+        error: `Please select a color for Size "${item.size}" of "${product.name}".`,
+      };
+    }
+  }
+
+  if (!matched) {
+    if (mode === 'restock') {
+      return {
+        error: `Cannot identify variant for product "${product.name}" (SKU: ${item.sku || 'N/A'}, Size: ${item.size || 'N/A'}, Color: ${item.color || 'N/A'}).`,
+      };
+    }
+    return {
+      error: `Selected variant (Size ${item.size || 'N/A'}${item.color ? `, Color ${item.color}` : ''}) is not available for "${product.name}".`,
+    };
+  }
+
+  return {
+    resolved: {
+      isSimpleProduct: false,
+      variantId: matched._id,
+      size: matched.size,
+      color: matched.color,
+      sku: matched.sku,
+      stock: Math.max(0, matched.stock || 0),
+    },
+  };
+}
+
 export async function createOrder(payload: CreateOrderPayload): Promise<ActionResult<{ order: IOrder; requiresOtp: boolean }>> {
   try {
     await connectToDatabase();
 
     // 1. Validate Form Input
     const validatedData = checkoutOrderSchema.parse(payload.checkoutData);
+    const rawCoords = validatedData.shippingAddress.coordinates;
+    if (rawCoords && !isValidCoordinatePair(rawCoords.lat, rawCoords.lng)) {
+      return errorResponse('Invalid delivery coordinates provided.');
+    }
+    const sanitizedCoordinates = rawCoords
+      ? { lat: rawCoords.lat, lng: rawCoords.lng, source: 'manual_pin' as const }
+      : undefined;
+    const normalizedStreet =
+      validatedData.shippingAddress.street?.trim() ||
+      validatedData.shippingAddress.address?.trim() ||
+      '';
+    const normalizedAddress =
+      validatedData.shippingAddress.address?.trim() ||
+      validatedData.shippingAddress.street?.trim() ||
+      'Address';
 
     if (!payload.items || payload.items.length === 0) {
       return errorResponse('Your cart is empty. Please add shoes before checking out.');
     }
 
+    for (const item of payload.items) {
+      if (!Number.isInteger(item.quantity) || item.quantity <= 0) {
+        return errorResponse('Item quantity must be a positive whole number.');
+      }
+    }
+
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable. Unable to place order right now.');
+      }
       const orderItems: IOrderItem[] = [];
+      const mockDeductions: Array<{
+        productId: string;
+        size: string;
+        color: string;
+        sku: string;
+        quantity: number;
+        isSimpleProduct: boolean;
+      }> = [];
+      const requestedByMockVariant = new Map<string, number>();
       let totalWeight = 0;
 
       for (const item of payload.items) {
-        const product =
-          MockDb.getProductById(item.productId) ||
-          MockDb.getProducts({}).products.find((p) => p._id.toString() === item.productId) ||
-          MockDb.getProducts({}).products[0];
+        const product = MockDb.getProductById(item.productId);
+        if (!product || product.isDeleted || product.isActive === false) {
+          return errorResponse('One of the selected shoes is no longer available.');
+        }
 
-        totalWeight += (product?.weight || 750) * item.quantity;
+        const { resolved, error } = resolveOrderProductVariant(
+          {
+            name: product.name,
+            sku: product.sku,
+            stock: product.stock,
+            variants: product.variants as unknown as VariantCandidate[],
+          },
+          item,
+          'checkout'
+        );
+
+        if (error || !resolved) {
+          return errorResponse(error || `Selected variant is not available for "${product.name}".`);
+        }
+
+        const dedupKey = `${product._id.toString()}::${resolved.isSimpleProduct ? 'SIMPLE' : resolved.sku}`;
+        const prevRequested = requestedByMockVariant.get(dedupKey) || 0;
+        const nextRequested = prevRequested + item.quantity;
+
+        if (resolved.stock < nextRequested) {
+          return errorResponse(
+            resolved.isSimpleProduct
+              ? `Insufficient stock for "${product.name}". Only ${resolved.stock} available.`
+              : `Insufficient stock for "${product.name}" in Size ${resolved.size} (${resolved.color}). Only ${resolved.stock} available.`
+          );
+        }
+
+        requestedByMockVariant.set(dedupKey, nextRequested);
+        mockDeductions.push({
+          productId: product._id.toString(),
+          size: resolved.size,
+          color: resolved.color,
+          sku: resolved.sku,
+          quantity: item.quantity,
+          isSimpleProduct: resolved.isSimpleProduct,
+        });
+
+        totalWeight += (product.weight || 750) * item.quantity;
         orderItems.push({
           _id: new Types.ObjectId(),
           productId: new Types.ObjectId(item.productId.length === 24 ? item.productId : undefined),
-          name: product?.name || 'Footwear',
-          image: product?.images?.[0] || '',
-          size: item.size,
-          color: item.color,
+          name: product.name,
+          image: product.images?.[0] || '',
+          size: resolved.size,
+          color: resolved.color,
           quantity: item.quantity,
-          price: product?.price || 4500,
-          sku: `${product?.sku || 'OX-SHO'}-${item.size}-${item.color.slice(0, 3).toUpperCase()}`,
+          price: product.price,
+          sku: resolved.sku,
         });
+      }
+
+      // Deduct MockDb stock before creating order
+      for (const ded of mockDeductions) {
+        const current = MockDb.getProductById(ded.productId);
+        if (!current) continue;
+        if (ded.isSimpleProduct) {
+          MockDb.updateProduct(ded.productId, {
+            stock: Math.max(0, (current.stock || 0) - ded.quantity),
+          });
+        } else {
+          const updatedVariants = (current.variants || []).map((v) =>
+            v.sku === ded.sku
+              ? { ...v, stock: Math.max(0, (v.stock || 0) - ded.quantity) }
+              : v
+          );
+          const totalVariantStock = updatedVariants.reduce(
+            (sum, v) => sum + Math.max(0, v.stock || 0),
+            0
+          );
+          MockDb.updateProduct(ded.productId, {
+            variants: updatedVariants,
+            stock: totalVariantStock,
+          });
+        }
       }
 
       let appliedCouponDoc = null;
@@ -107,10 +421,12 @@ export async function createOrder(payload: CreateOrderPayload): Promise<ActionRe
         shippingAddress: {
           fullName: validatedData.shippingAddress.fullName,
           phone: validatedData.shippingAddress.phone,
-          address: validatedData.shippingAddress.street || 'Address',
-          street: validatedData.shippingAddress.street,
+          villageAddress: validatedData.shippingAddress.villageAddress || '',
+          address: normalizedAddress,
+          street: normalizedStreet,
           city: validatedData.shippingAddress.city,
-          postalCode: validatedData.shippingAddress.postalCode,
+          postalCode: validatedData.shippingAddress.postalCode || '',
+          ...(sanitizedCoordinates ? { coordinates: sanitizedCoordinates } : {}),
         },
         status: OrderStatus.CONFIRMED,
         paymentMethod: validatedData.paymentMethod as PaymentMethod,
@@ -128,11 +444,22 @@ export async function createOrder(payload: CreateOrderPayload): Promise<ActionRe
     }
 
     // 2. Fetch Live Products and Validate Stocks
-    const productIds = payload.items.map((i) => i.productId);
+    const productIds = Array.from(new Set(payload.items.map((i) => i.productId)));
     const products = await Product.find({ _id: { $in: productIds }, isActive: true, isDeleted: { $ne: true } });
     const productMap = new Map(products.map((p) => [p._id.toString(), p]));
 
     const orderItems: IOrderItem[] = [];
+    const stockTargets: Array<{
+      productId: Types.ObjectId;
+      name: string;
+      variantId?: Types.ObjectId | string;
+      sku: string;
+      size: string;
+      color: string;
+      quantity: number;
+      isSimpleProduct: boolean;
+    }> = [];
+    const requestedByKey = new Map<string, number>();
     let totalWeight = 0;
 
     for (const item of payload.items) {
@@ -141,68 +468,57 @@ export async function createOrder(payload: CreateOrderPayload): Promise<ActionRe
         return errorResponse(`One of the selected shoes is no longer available.`);
       }
 
-      // 2a. Validate SKU/variant stock if product has size variants
-      let matchingVariant = null;
-      if (product.variants && product.variants.length > 0) {
-        const normSize = item.size.trim().toLowerCase();
-        const normColor = item.color ? item.color.trim().toLowerCase() : '';
+      const { resolved, error } = resolveOrderProductVariant(
+        {
+          name: product.name,
+          sku: product.sku,
+          stock: product.stock,
+          variants: product.variants as unknown as VariantCandidate[],
+        },
+        item,
+        'checkout'
+      );
 
-        if (normColor) {
-          // Exact match on size AND color
-          matchingVariant =
-            product.variants.find(
-              (v) =>
-                v.size.trim().toLowerCase() === normSize &&
-                v.color.trim().toLowerCase() === normColor
-            ) || null;
-        } else {
-          // Color not specified: check size variants
-          const sizeVariants = product.variants.filter(
-            (v) => v.size.trim().toLowerCase() === normSize
-          );
-          if (sizeVariants.length === 1) {
-            matchingVariant = sizeVariants[0];
-          } else if (sizeVariants.length > 1) {
-            return errorResponse(
-              `Please select a color for Size "${item.size}" of "${product.name}".`
-            );
-          }
-        }
-
-        if (!matchingVariant) {
-          return errorResponse(
-            `Selected variant (Size ${item.size}${item.color ? `, Color ${item.color}` : ''}) is not available for "${product.name}".`
-          );
-        }
-
-        if (matchingVariant.stock < item.quantity) {
-          return errorResponse(
-            `Insufficient stock for "${product.name}" in Size ${item.size}${item.color ? ` (${item.color})` : ''}. Only ${matchingVariant.stock} available.`
-          );
-        }
-      } else {
-        // Fallback for simple products without variants
-        if (product.stock < item.quantity) {
-          return errorResponse(`Insufficient stock for "${product.name}". Only ${product.stock} available.`);
-        }
+      if (error || !resolved) {
+        return errorResponse(error || `Selected variant is not available for "${product.name}".`);
       }
 
-      totalWeight += (product.weight || 750) * item.quantity;
+      const dedupKey = `${product._id.toString()}::${
+        resolved.isSimpleProduct ? 'SIMPLE' : resolved.variantId?.toString() || resolved.sku
+      }`;
+      const cumulativeQty = (requestedByKey.get(dedupKey) || 0) + item.quantity;
+      if (resolved.stock < cumulativeQty) {
+        return errorResponse(
+          resolved.isSimpleProduct
+            ? `Insufficient stock for "${product.name}". Only ${resolved.stock} available.`
+            : `Insufficient stock for "${product.name}" in Size ${resolved.size} (${resolved.color}). Only ${resolved.stock} available.`
+        );
+      }
+      requestedByKey.set(dedupKey, cumulativeQty);
 
-      const derivedSku =
-        matchingVariant?.sku ||
-        `${product.sku}-${item.size}-${item.color ? item.color.slice(0, 3).toUpperCase() : 'STD'}`;
+      totalWeight += (product.weight || 750) * item.quantity;
 
       orderItems.push({
         _id: new Types.ObjectId(),
         productId: product._id,
         name: product.name,
         image: product.images[0] || '',
-        size: item.size,
-        color: item.color,
+        size: resolved.size,
+        color: resolved.color,
         quantity: item.quantity,
         price: product.price,
-        sku: derivedSku,
+        sku: resolved.sku,
+      });
+
+      stockTargets.push({
+        productId: product._id,
+        name: product.name,
+        variantId: resolved.variantId,
+        sku: resolved.sku,
+        size: resolved.size,
+        color: resolved.color,
+        quantity: item.quantity,
+        isSimpleProduct: resolved.isSimpleProduct,
       });
     }
 
@@ -323,8 +639,12 @@ export async function createOrder(payload: CreateOrderPayload): Promise<ActionRe
 
     const trackingNumber = `TCS-${Math.floor(10000000 + Math.random() * 90000000)}`;
 
-    // 8. Create Order, Reserve Capacity, Decrement Stock, and Record Usage inside Transaction
+    // 8. Reserve Capacity, Atomically Decrement Stock FIRST, Then Create Order & Usage
     return await executeWithOptionalTransaction(async (dbSession) => {
+      if (!dbSession || !dbSession.inTransaction()) {
+        throw new Error('Active MongoDB transaction session is required for order creation.');
+      }
+
       // 8a. Atomic Global Coupon Capacity Reservation
       if (appliedCouponDoc) {
         const reservedCoupon = await Coupon.findOneAndUpdate(
@@ -334,7 +654,7 @@ export async function createOrder(payload: CreateOrderPayload): Promise<ActionRe
             $expr: { $lt: ['$usedCount', '$usageLimit'] },
           },
           { $inc: { usedCount: 1 } },
-          { session: dbSession || undefined, new: true }
+          { session: dbSession, returnDocument: 'after' }
         );
 
         if (!reservedCoupon) {
@@ -342,7 +662,34 @@ export async function createOrder(payload: CreateOrderPayload): Promise<ActionRe
         }
       }
 
-      // 8b. Create Order Document
+      // 8b. Atomic Inventory Deduction BEFORE Order.create (prevents orphan orders)
+      for (const target of stockTargets) {
+        let updatedProduct = null;
+
+        if (target.isSimpleProduct) {
+          updatedProduct = await Product.findOneAndUpdate(
+            { _id: target.productId, stock: { $gte: target.quantity } },
+            { $inc: { stock: -target.quantity } },
+            { session: dbSession, returnDocument: 'after' }
+          );
+        } else {
+          updatedProduct = await applyAtomicVariantStockDelta({
+            productId: target.productId,
+            variantId: target.variantId,
+            sku: target.sku,
+            delta: -target.quantity,
+            session: dbSession,
+          });
+        }
+
+        if (!updatedProduct) {
+          throw new Error(
+            `Insufficient stock for "${target.name}" (Size: ${target.size}${target.color ? `, Color: ${target.color}` : ''}). Another order may have claimed the remaining units.`
+          );
+        }
+      }
+
+      // 8c. Create Order Document (only after all stock deductions succeed)
       const createOrderDocs = await Order.create(
         [
           {
@@ -360,10 +707,12 @@ export async function createOrder(payload: CreateOrderPayload): Promise<ActionRe
             shippingAddress: {
               fullName: validatedData.shippingAddress.fullName,
               phone: validatedData.shippingAddress.phone,
-              address: validatedData.shippingAddress.street || 'Address',
-              street: validatedData.shippingAddress.street,
+              villageAddress: validatedData.shippingAddress.villageAddress || '',
+              address: normalizedAddress,
+              street: normalizedStreet,
               city: validatedData.shippingAddress.city,
-              postalCode: validatedData.shippingAddress.postalCode,
+              postalCode: validatedData.shippingAddress.postalCode || '',
+              ...(sanitizedCoordinates ? { coordinates: sanitizedCoordinates } : {}),
             },
             status: OrderStatus.CONFIRMED,
             paymentMethod: validatedData.paymentMethod as PaymentMethod,
@@ -374,91 +723,14 @@ export async function createOrder(payload: CreateOrderPayload): Promise<ActionRe
             verificationToken: generateVerificationToken(),
           },
         ],
-        { session: dbSession || undefined }
+        { session: dbSession }
       );
 
       const newOrder = createOrderDocs[0];
 
-      // 8c. Decrement Inventory Atomic with Stock Availability Guard
-      for (const item of orderItems) {
-        const prodDoc = productMap.get(item.productId.toString());
-        const hasVariants = prodDoc && Array.isArray(prodDoc.variants) && prodDoc.variants.length > 0;
-
-        let updatedProduct = null;
-        if (hasVariants) {
-          // Exact matching filter for variant: prefer SKU if present, otherwise exact size + color
-          const elemMatch: Record<string, any> = {
-            stock: { $gte: item.quantity },
-          };
-
-          if (item.sku) {
-            elemMatch.sku = item.sku;
-          } else {
-            elemMatch.size = item.size;
-            if (item.color) {
-              elemMatch.color = item.color;
-            }
-          }
-
-          updatedProduct = await Product.findOneAndUpdate(
-            {
-              _id: item.productId,
-              stock: { $gte: item.quantity },
-              variants: { $elemMatch: elemMatch },
-            },
-            {
-              $inc: {
-                stock: -item.quantity,
-                'variants.$.stock': -item.quantity,
-              },
-            },
-            { session: dbSession || undefined, new: true }
-          );
-
-          // Fallback if matching by SKU didn't find variant
-          if (!updatedProduct && item.sku && item.size) {
-            const fallbackMatch: Record<string, any> = {
-              size: item.size,
-              stock: { $gte: item.quantity },
-            };
-            if (item.color) {
-              fallbackMatch.color = item.color;
-            }
-
-            updatedProduct = await Product.findOneAndUpdate(
-              {
-                _id: item.productId,
-                stock: { $gte: item.quantity },
-                variants: { $elemMatch: fallbackMatch },
-              },
-              {
-                $inc: {
-                  stock: -item.quantity,
-                  'variants.$.stock': -item.quantity,
-                },
-              },
-              { session: dbSession || undefined, new: true }
-            );
-          }
-        } else {
-          // Standard decrement for products without variants
-          updatedProduct = await Product.findOneAndUpdate(
-            { _id: item.productId, stock: { $gte: item.quantity } },
-            { $inc: { stock: -item.quantity } },
-            { session: dbSession || undefined, new: true }
-          );
-        }
-
-        if (!updatedProduct) {
-          throw new Error(
-            `Insufficient stock for "${item.name}" (Size: ${item.size}${item.color ? `, Color: ${item.color}` : ''}). Another order may have claimed the remaining units.`
-          );
-        }
-      }
-
       // 8d. Record Coupon Usage Audit
       if (appliedCouponDoc) {
-        const usagePayload: any = {
+        const usagePayload: Record<string, unknown> = {
           couponId: appliedCouponDoc._id,
           orderId: newOrder._id,
           discountApplied: pricing.discountAmount,
@@ -469,7 +741,7 @@ export async function createOrder(payload: CreateOrderPayload): Promise<ActionRe
           if (cleanEmail) usagePayload.guestEmail = cleanEmail;
           if (cleanPhone) usagePayload.guestPhone = cleanPhone;
         }
-        await CouponUsage.create([usagePayload], { session: dbSession || undefined });
+        await CouponUsage.create([usagePayload], { session: dbSession });
       }
 
       return successResponse({
@@ -504,6 +776,9 @@ export async function getOrderById(orderId: string): Promise<ActionResult<IOrder
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable.');
+      }
       const mockOrder = MockDb.getOrderById(orderId);
       if (mockOrder) {
         const orderOwnerId = mockOrder.userId?.toString();
@@ -574,6 +849,9 @@ export async function trackOrder(
     let order = null;
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable.');
+      }
       const mockOrder = MockDb.trackOrder(normalizedOrderNum);
       if (mockOrder) {
         order = mockOrder;
@@ -618,6 +896,16 @@ export async function trackOrder(
     }
 
     // 4. Return Redacted DTO (No PII)
+    const rawDestCoords = order.shippingAddress?.coordinates;
+    const validDestCoords =
+      rawDestCoords && isValidCoordinatePair(rawDestCoords.lat, rawDestCoords.lng)
+        ? {
+            lat: rawDestCoords.lat,
+            lng: rawDestCoords.lng,
+            source: rawDestCoords.source,
+          }
+        : undefined;
+
     const dto: ITrackOrderDTO = {
       _id: order._id.toString(),
       orderNumber: order.orderNumber,
@@ -627,6 +915,8 @@ export async function trackOrder(
       totalAmount: order.totalAmount,
       courier: order.courier,
       trackingNumber: order.trackingNumber,
+      destinationCity: order.shippingAddress?.city || undefined,
+      ...(validDestCoords ? { destinationCoordinates: validDestCoords } : {}),
       orderItems: order.orderItems.map((item: any) => ({
         name: item.name,
         size: item.size,
@@ -665,6 +955,9 @@ export async function getUserOrders(userId: string): Promise<ActionResult<IOrder
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable.');
+      }
       const mockOrders = MockDb.getAllOrders().filter(
         (o) => o.userId?.toString() === userId
       );
@@ -699,6 +992,9 @@ export async function getAllOrders(filters?: {
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable.');
+      }
       return successResponse(MockDb.getAllOrders(filters));
     }
 
@@ -733,14 +1029,7 @@ export async function getAllOrders(filters?: {
       .lean();
     return successResponse(JSON.parse(JSON.stringify(orders)));
   } catch (error: unknown) {
-    const auth = await verifyDepartmentAuth({
-      requiredDepartment: Department.ORDERS,
-      requiredPermission: 'orders:read',
-    });
-    if (!auth.authorized) {
-      return errorResponse(auth.error || 'Unauthorized: Orders clearance required.');
-    }
-    return successResponse(MockDb.getAllOrders(filters));
+    return handleActionError(error);
   }
 }
 
@@ -754,6 +1043,9 @@ export async function archiveOrder(orderId: string): Promise<ActionResult<IOrder
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable. Cannot archive order.');
+      }
       const updated = MockDb.archiveOrder(orderId);
       if (!updated) return errorResponse('Order not found.');
       return successResponse(updated, 'Order archived successfully.');
@@ -766,19 +1058,11 @@ export async function archiveOrder(orderId: string): Promise<ActionResult<IOrder
     ).lean();
 
     if (!order) {
-      const mockUpdated = MockDb.archiveOrder(orderId);
-      if (mockUpdated) return successResponse(mockUpdated, 'Order archived successfully.');
       return errorResponse('Order not found.');
     }
 
     return successResponse(JSON.parse(JSON.stringify(order)), 'Order archived successfully.');
   } catch (error: unknown) {
-    const auth = await verifyDepartmentAuth();
-    if (!auth.authorized || !isElevatedAdminRole(auth.role)) {
-      return errorResponse(auth.error || 'Unauthorized: Administrative clearance required to archive orders.');
-    }
-    const mockUpdated = MockDb.archiveOrder(orderId);
-    if (mockUpdated) return successResponse(mockUpdated, 'Order archived successfully.');
     return handleActionError(error);
   }
 }
@@ -793,6 +1077,9 @@ export async function unarchiveOrder(orderId: string): Promise<ActionResult<IOrd
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable. Cannot restore order.');
+      }
       const updated = MockDb.unarchiveOrder(orderId);
       if (!updated) return errorResponse('Order not found.');
       return successResponse(updated, 'Order restored / unarchived successfully.');
@@ -805,19 +1092,11 @@ export async function unarchiveOrder(orderId: string): Promise<ActionResult<IOrd
     ).lean();
 
     if (!order) {
-      const mockUpdated = MockDb.unarchiveOrder(orderId);
-      if (mockUpdated) return successResponse(mockUpdated, 'Order restored / unarchived successfully.');
       return errorResponse('Order not found.');
     }
 
     return successResponse(JSON.parse(JSON.stringify(order)), 'Order restored / unarchived successfully.');
   } catch (error: unknown) {
-    const auth = await verifyDepartmentAuth();
-    if (!auth.authorized || !isElevatedAdminRole(auth.role)) {
-      return errorResponse(auth.error || 'Unauthorized: Administrative clearance required to restore orders.');
-    }
-    const mockUpdated = MockDb.unarchiveOrder(orderId);
-    if (mockUpdated) return successResponse(mockUpdated, 'Order restored / unarchived successfully.');
     return handleActionError(error);
   }
 }
@@ -844,109 +1123,117 @@ export async function updateOrderStatus(
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable. Cannot update order status.');
+      }
       const updated = MockDb.updateOrderStatus(orderId, updates);
       if (!updated) return errorResponse('Order not found.');
       return successResponse(updated);
     }
 
-    return await executeWithOptionalTransaction(async (dbSession) => {
+    const txResult = await executeWithOptionalTransaction(async (dbSession) => {
+      if (!dbSession || !dbSession.inTransaction()) {
+        throw new Error('Active MongoDB transaction session is required for order status updates.');
+      }
+
       // Idempotent Restocking: only restock if not already restocked
       let restockedOrderDoc: any = null;
       if (updates.status === OrderStatus.CANCELLED || updates.status === OrderStatus.RETURNED) {
-        const orderDoc = await Order.findById(orderId).session(dbSession || null).lean();
+        const orderDoc = await Order.findById(orderId).session(dbSession).lean();
         if (!orderDoc) {
-          const mockUpdated = MockDb.updateOrderStatus(orderId, updates);
-          if (mockUpdated) return successResponse(mockUpdated);
           return errorResponse('Order not found.');
         }
 
         if (!orderDoc.isRestocked && Array.isArray(orderDoc.orderItems)) {
-          // Phase 1: Pre-validate variant identity for all order items before mutating any stock
+          // Phase 1: Pre-validate variant identity for all order items using normalized resolver
           const itemsToRestock: Array<{
             productId: string;
             quantity: number;
-            variantId?: any;
+            variantId?: Types.ObjectId | string;
+            sku: string;
             isSimpleProduct: boolean;
           }> = [];
 
           for (const item of orderDoc.orderItems) {
-            const product = await Product.findById(item.productId).session(dbSession || null).lean();
+            const product = await Product.findById(item.productId).session(dbSession).lean();
             if (!product) {
               throw new Error(`Product not found for ID: ${item.productId}`);
             }
 
-            const hasVariants = Array.isArray(product.variants) && product.variants.length > 0;
-            if (!hasVariants) {
-              itemsToRestock.push({
-                productId: item.productId.toString(),
-                quantity: item.quantity,
-                isSimpleProduct: true,
-              });
-              continue;
-            }
+            const { resolved, error } = resolveOrderProductVariant(
+              {
+                name: product.name,
+                sku: product.sku,
+                stock: product.stock,
+                variants: product.variants as unknown as VariantCandidate[],
+              },
+              {
+                sku: item.sku,
+                size: item.size,
+                color: item.color,
+              },
+              'restock'
+            );
 
-            let matchedVariant: any = null;
-            // 1. Try exact SKU match first
-            if (item.sku) {
-              matchedVariant = product.variants.find((v: any) => v.sku === item.sku);
-            }
-            // 2. Try exact size AND color match
-            if (!matchedVariant && item.size && item.color) {
-              matchedVariant = product.variants.find((v: any) => v.size === item.size && v.color === item.color);
-            }
-            // 3. Size provided without SKU / color (legacy order item)
-            if (!matchedVariant && item.size) {
-              const sizeMatches = product.variants.filter((v: any) => v.size === item.size);
-              if (sizeMatches.length === 1) {
-                matchedVariant = sizeMatches[0];
-              } else if (sizeMatches.length > 1) {
-                throw new Error(
-                  `Ambiguous legacy order restocking: Size "${item.size}" has multiple color variants for "${product.name}". Please specify variant identity.`
-                );
-              }
-            }
-
-            if (!matchedVariant) {
-              throw new Error(
-                `Cannot identify variant for product "${product.name}" (SKU: ${item.sku || 'N/A'}, Size: ${item.size || 'N/A'}, Color: ${item.color || 'N/A'}).`
-              );
+            if (error || !resolved) {
+              throw new Error(error || `Cannot identify variant for product "${product.name}".`);
             }
 
             itemsToRestock.push({
               productId: item.productId.toString(),
               quantity: item.quantity,
-              variantId: matchedVariant._id,
-              isSimpleProduct: false,
+              variantId: resolved.variantId,
+              sku: resolved.sku,
+              isSimpleProduct: resolved.isSimpleProduct,
             });
           }
 
-          // Phase 2: Execute restocking updates now that all items are validated
-          for (const target of itemsToRestock) {
-            if (target.isSimpleProduct) {
-              await Product.findByIdAndUpdate(
-                target.productId,
-                { $inc: { stock: target.quantity } },
-                { session: dbSession || undefined }
-              );
-            } else {
-              await Product.findOneAndUpdate(
-                { _id: target.productId, 'variants._id': target.variantId },
-                { $inc: { stock: target.quantity, 'variants.$.stock': target.quantity } },
-                { session: dbSession || undefined }
-              );
+          // Phase 2: Atomically claim isRestocked flag BEFORE incrementing stock to prevent double-restocking
+          restockedOrderDoc = await Order.findOneAndUpdate(
+            { _id: orderId, isRestocked: { $ne: true } },
+            { $set: { ...updates, isRestocked: true, restockedAt: new Date() } },
+            { session: dbSession, returnDocument: 'after' }
+          ).lean();
+
+          if (restockedOrderDoc) {
+            // Phase 3: Atomically increment variant stock and recalculate parent aggregate stock in one write
+            for (const target of itemsToRestock) {
+              if (target.isSimpleProduct) {
+                const updatedSimple = await Product.findByIdAndUpdate(
+                  target.productId,
+                  { $inc: { stock: target.quantity } },
+                  { session: dbSession, returnDocument: 'after' }
+                );
+                if (!updatedSimple) {
+                  throw new Error(`Failed to restock simple product ${target.productId}.`);
+                }
+              } else {
+                const restoredProd = await applyAtomicVariantStockDelta({
+                  productId: target.productId,
+                  variantId: target.variantId,
+                  sku: target.sku,
+                  delta: target.quantity,
+                  session: dbSession,
+                });
+                if (!restoredProd) {
+                  throw new Error(`Failed to restock variant (SKU: ${target.sku}) for product ${target.productId}.`);
+                }
+              }
             }
           }
         }
 
-        // Phase 3: Mark isRestocked: true and update order status
-        restockedOrderDoc = await Order.findByIdAndUpdate(
-          orderId,
-          { $set: { ...updates, isRestocked: true, restockedAt: new Date() } },
-          { session: dbSession || undefined, new: true }
-        ).lean();
+        // If already restocked previously, still update status/metadata if needed
+        if (!restockedOrderDoc) {
+          restockedOrderDoc = await Order.findByIdAndUpdate(
+            orderId,
+            { $set: { ...updates, isRestocked: true, restockedAt: orderDoc.restockedAt || new Date() } },
+            { session: dbSession, returnDocument: 'after' }
+          ).lean();
+        }
 
         // Phase 4: Cancel referral with session propagation & actor attribution
-        await cancelReferralInternal(orderId, dbSession || undefined, auth.userId || undefined);
+        await cancelReferralInternal(orderId, dbSession, auth.userId || undefined);
       }
 
       const updated =
@@ -954,72 +1241,69 @@ export async function updateOrderStatus(
         (await Order.findByIdAndUpdate(
           orderId,
           { $set: updates },
-          { session: dbSession || undefined, new: true }
+          { session: dbSession, returnDocument: 'after' }
         ).lean());
 
       if (!updated) {
-        const mockUpdated = MockDb.updateOrderStatus(orderId, updates);
-        if (mockUpdated) return successResponse(mockUpdated);
         return errorResponse('Order not found.');
       }
 
-      if (updates.status === OrderStatus.DELIVERED) {
-        const targetUserId = (updated as unknown as { userId?: unknown }).userId;
-        if (targetUserId) {
-          try {
-            await completeReferralInternal(targetUserId.toString(), orderId);
-          } catch (e) {
-            console.warn('[Referral] Auto-complete error on delivery:', e);
-          }
-        }
-      }
-
-      // Auto-trigger customer notification when order status changes (e.g. Shipped / Delivered)
-      if (updates.status) {
-        try {
-          const orderNum = (updated as unknown as { orderNumber?: string }).orderNumber || 'Order';
-          const rawUserId = (updated as unknown as { userId?: unknown }).userId;
-          const targetUserId = rawUserId ? rawUserId.toString() : 'guest';
-          const shipAddr = (updated as unknown as { shippingAddress?: { fullName?: string } }).shippingAddress;
-          const custName = shipAddr?.fullName || 'Customer';
-
-          let notifTitle = `Order ${updates.status} - OX Shoes`;
-          let notifMessage = `Hello ${custName}, your order ${orderNum} status is now ${updates.status}.`;
-
-          if (updates.status === OrderStatus.SHIPPED) {
-            notifTitle = `Order ${orderNum} Dispatched! 🚚`;
-            notifMessage = `Hello ${custName}, your order ${orderNum} is Shipped via ${(updated as unknown as { courier?: string }).courier || 'TCS'} with tracking #${(updated as unknown as { trackingNumber?: string }).trackingNumber || 'assigned'}.`;
-          } else if (updates.status === OrderStatus.DELIVERED) {
-            notifTitle = `Order ${orderNum} Delivered! 🎉`;
-            notifMessage = `Hello ${custName}, your order ${orderNum} is Delivered. Thank you for choosing OX Shoes Pakistan!`;
-          }
-
-          await Notification.create({
-            userId: targetUserId,
-            title: notifTitle,
-            message: notifMessage,
-            type: NotificationType.ORDER_UPDATE,
-            link: `/track?order=${orderNum}`,
-            isRead: false,
-            createdAt: new Date(),
-          });
-        } catch (e) {
-          console.warn('[OX Notifications] Auto-create notification error:', e);
-        }
-      }
-
-      return successResponse(JSON.parse(JSON.stringify(updated)));
+      return successResponse(JSON.parse(JSON.stringify(updated)) as IOrder);
     });
-  } catch (error: unknown) {
-    const auth = await verifyDepartmentAuth({
-      requiredDepartment: Department.ORDERS,
-      requiredPermission: 'orders:update_status',
-    });
-    if (!auth.authorized) {
-      return errorResponse(auth.error || 'Unauthorized: Orders update clearance required.');
+
+    if (!txResult.success) {
+      return txResult;
     }
-    const mockUpdated = MockDb.updateOrderStatus(orderId, updates);
-    if (mockUpdated) return successResponse(mockUpdated);
+
+    const updatedOrder = txResult.data;
+
+    if (updates.status === OrderStatus.DELIVERED) {
+      const targetUserId = (updatedOrder as unknown as { userId?: unknown }).userId;
+      if (targetUserId) {
+        try {
+          await completeReferralInternal(targetUserId.toString(), orderId);
+        } catch (e) {
+          console.warn('[Referral] Auto-complete error on delivery:', e);
+        }
+      }
+    }
+
+    // Auto-trigger customer notification only after transaction commits cleanly
+    if (updates.status) {
+      try {
+        const orderNum = (updatedOrder as unknown as { orderNumber?: string }).orderNumber || 'Order';
+        const rawUserId = (updatedOrder as unknown as { userId?: unknown }).userId;
+        const targetUserId = rawUserId ? rawUserId.toString() : 'guest';
+        const shipAddr = (updatedOrder as unknown as { shippingAddress?: { fullName?: string } }).shippingAddress;
+        const custName = shipAddr?.fullName || 'Customer';
+
+        let notifTitle = `Order ${updates.status} - OX Shoes`;
+        let notifMessage = `Hello ${custName}, your order ${orderNum} status is now ${updates.status}.`;
+
+        if (updates.status === OrderStatus.SHIPPED) {
+          notifTitle = `Order ${orderNum} Dispatched! 🚚`;
+          notifMessage = `Hello ${custName}, your order ${orderNum} is Shipped via ${(updatedOrder as unknown as { courier?: string }).courier || 'TCS'} with tracking #${(updatedOrder as unknown as { trackingNumber?: string }).trackingNumber || 'assigned'}.`;
+        } else if (updates.status === OrderStatus.DELIVERED) {
+          notifTitle = `Order ${orderNum} Delivered! 🎉`;
+          notifMessage = `Hello ${custName}, your order ${orderNum} is Delivered. Thank you for choosing OX Shoes Pakistan!`;
+        }
+
+        await Notification.create({
+          userId: targetUserId,
+          title: notifTitle,
+          message: notifMessage,
+          type: NotificationType.ORDER_UPDATE,
+          link: `/track?order=${orderNum}`,
+          isRead: false,
+          createdAt: new Date(),
+        });
+      } catch (e) {
+        console.warn('[OX Notifications] Auto-create notification error:', e);
+      }
+    }
+
+    return txResult;
+  } catch (error: unknown) {
     return handleActionError(error);
   }
 }
@@ -1071,10 +1355,12 @@ export async function verifyInvoiceToken(
     if (isDatabaseConnected()) {
       // Direct indexed lookup by persisted verificationToken ONLY (O(1) query)
       foundOrder = await Order.findOne({ verificationToken: cleanToken }).select('orderNumber').lean();
-    } else {
-      // MockDb fallback
+    } else if (canUseMockDatabase()) {
+      // Intentional offline local/test MockDb lookup
       const mockOrders = MockDb.getAllOrders();
       foundOrder = mockOrders.find((o: any) => o.verificationToken === cleanToken);
+    } else {
+      return errorResponse('Database connection unavailable.');
     }
 
     if (!foundOrder) {

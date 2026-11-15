@@ -6,7 +6,7 @@
  * Strict TypeScript: ZERO `any`.
  */
 
-import { connectToDatabase, isDatabaseConnected } from '@/lib/db/connect';
+import { canUseMockDatabase, connectToDatabase, isDatabaseConnected } from '@/lib/db/connect';
 import { User } from '@/models/User';
 import { WalletTransaction } from '@/models/WalletTransaction';
 import { successResponse, errorResponse, type ActionResult } from '@/lib/response';
@@ -16,42 +16,318 @@ import { TransactionStatus, type IWalletTransaction } from '@/types';
 import mongoose, { Types } from 'mongoose';
 import { revalidatePath } from 'next/cache';
 
+export class TransactionUnavailableError extends Error {
+  public readonly topologyType: string;
+  public readonly reason: string;
+
+  constructor(message: string, topologyType: string, reason: string) {
+    super(message);
+    this.name = 'TransactionUnavailableError';
+    this.topologyType = topologyType;
+    this.reason = reason;
+  }
+}
+
+export interface MongoTransactionSupportStatus {
+  supported: boolean;
+  topologyType: string;
+  reason?:
+    | 'NOT_CONNECTED'
+    | 'STANDALONE'
+    | 'REPLICA_SET_NO_PRIMARY'
+    | 'NO_LOGICAL_SESSIONS'
+    | 'UNKNOWN';
+}
+
+export interface ExecuteTransactionOptions {
+  existingSession?: mongoose.ClientSession;
+  /**
+   * Multi-document operations (e.g., checkout order creation, multi-item restocking)
+   * MUST fail closed when MongoDB does not support ACID transactions.
+   * Only callers with proven compensating rollback and idempotency keys may opt in.
+   */
+  allowStandaloneFallback?: boolean;
+  maxRetries?: number;
+}
+
+interface MongoTopologyDescriptionLike {
+  type?: string;
+  logicalSessionTimeoutMinutes?: number | null;
+}
+
+interface MongoClientLike {
+  topology?: {
+    description?: MongoTopologyDescriptionLike;
+  };
+}
+
+interface HelloCommandResponse {
+  setName?: string;
+  msg?: string;
+  isWritablePrimary?: boolean;
+  ismaster?: boolean;
+  logicalSessionTimeoutMinutes?: number | null;
+}
+
+interface MongoErrorLike {
+  message?: string;
+  code?: number;
+  errorLabels?: unknown;
+  hasErrorLabel?: (label: string) => boolean;
+}
+
+let cachedSingleTopologyResult: {
+  clientRef: unknown;
+  rawType: string;
+  status: MongoTransactionSupportStatus;
+} | null = null;
+
 /**
- * Safely executes database mutations within a Mongoose session transaction if supported
- * by the active MongoDB topology (Replica Set / Atlas), falling back to standalone execution
- * with compensating rollback on non-replica set deployments.
+ * Resets cached topology probe results (intended for unit/integration tests).
+ */
+export function resetTransactionTopologyCache(): void {
+  cachedSingleTopologyResult = null;
+}
+
+function hasMongoErrorLabel(err: unknown, label: string): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const candidate = err as MongoErrorLike;
+  if (typeof candidate.hasErrorLabel === 'function') {
+    try {
+      if (candidate.hasErrorLabel(label)) return true;
+    } catch {
+      // Ignore non-standard error object implementations
+    }
+  }
+  if (Array.isArray(candidate.errorLabels) && candidate.errorLabels.includes(label)) {
+    return true;
+  }
+  return false;
+}
+
+export function isTransientTransactionError(err: unknown): boolean {
+  return hasMongoErrorLabel(err, 'TransientTransactionError');
+}
+
+export function isUnknownCommitResultError(err: unknown): boolean {
+  return hasMongoErrorLabel(err, 'UnknownTransactionCommitResult');
+}
+
+/**
+ * Inspects actual MongoDB client topology and server capabilities (`hello` command for
+ * Single/Unknown connections) rather than assuming `readyState === 1` implies ACID support.
+ */
+export async function detectMongoTransactionSupport(): Promise<MongoTransactionSupportStatus> {
+  if (!mongoose.connection || mongoose.connection.readyState !== 1) {
+    cachedSingleTopologyResult = null;
+    return {
+      supported: false,
+      topologyType: 'Disconnected',
+      reason: 'NOT_CONNECTED',
+    };
+  }
+
+  const client =
+    typeof mongoose.connection.getClient === 'function'
+      ? (mongoose.connection.getClient() as unknown as MongoClientLike)
+      : null;
+
+  const description = client?.topology?.description;
+  const rawType = description?.type || 'Unknown';
+
+  if (
+    rawType === 'ReplicaSetWithPrimary' ||
+    rawType === 'Sharded' ||
+    rawType === 'LoadBalanced'
+  ) {
+    if (description?.logicalSessionTimeoutMinutes === null) {
+      return {
+        supported: false,
+        topologyType: rawType,
+        reason: 'NO_LOGICAL_SESSIONS',
+      };
+    }
+    return {
+      supported: true,
+      topologyType: rawType,
+    };
+  }
+
+  if (rawType === 'ReplicaSetNoPrimary') {
+    return {
+      supported: false,
+      topologyType: rawType,
+      reason: 'REPLICA_SET_NO_PRIMARY',
+    };
+  }
+
+  if (
+    cachedSingleTopologyResult &&
+    cachedSingleTopologyResult.clientRef === client &&
+    cachedSingleTopologyResult.rawType === rawType
+  ) {
+    return cachedSingleTopologyResult.status;
+  }
+
+  let status: MongoTransactionSupportStatus = {
+    supported: false,
+    topologyType: rawType,
+    reason: 'UNKNOWN',
+  };
+
+  try {
+    const admin = mongoose.connection.db?.admin?.();
+    if (admin && typeof admin.command === 'function') {
+      const hello = (await admin.command({ hello: 1 })) as HelloCommandResponse;
+      const isReplOrMongos = Boolean(hello?.setName || hello?.msg === 'isdbgrid');
+      const hasLogicalSessions =
+        hello?.logicalSessionTimeoutMinutes !== null &&
+        hello?.logicalSessionTimeoutMinutes !== undefined;
+      const isWritable = hello?.isWritablePrimary === true || hello?.ismaster === true || hello?.msg === 'isdbgrid';
+
+      if (isReplOrMongos && hasLogicalSessions && isWritable) {
+        status = {
+          supported: true,
+          topologyType: hello?.msg === 'isdbgrid' ? 'Sharded' : 'DirectReplicaSet',
+        };
+      } else if (!isReplOrMongos) {
+        status = {
+          supported: false,
+          topologyType: 'Single',
+          reason: 'STANDALONE',
+        };
+      } else if (!hasLogicalSessions) {
+        status = {
+          supported: false,
+          topologyType: rawType,
+          reason: 'NO_LOGICAL_SESSIONS',
+        };
+      } else {
+        status = {
+          supported: false,
+          topologyType: rawType,
+          reason: 'REPLICA_SET_NO_PRIMARY',
+        };
+      }
+    }
+  } catch {
+    status = {
+      supported: false,
+      topologyType: rawType,
+      reason: 'UNKNOWN',
+    };
+  }
+
+  cachedSingleTopologyResult = {
+    clientRef: client,
+    rawType,
+    status,
+  };
+
+  return status;
+}
+
+function isFailedActionResult(val: unknown): boolean {
+  return (
+    typeof val === 'object' &&
+    val !== null &&
+    'success' in val &&
+    (val as { success?: unknown }).success === false
+  );
+}
+
+/**
+ * Executes database mutations inside a real MongoDB ACID transaction when supported.
+ * - Verifies actual cluster topology before opening a transaction.
+ * - Fails closed if topology is unsupported unless `allowStandaloneFallback` is explicitly enabled
+ *   for proven-safe compensating single-entity operations.
+ * - Retries ONLY on genuine MongoDB `TransientTransactionError` / `UnknownTransactionCommitResult`
+ *   labels using a fresh session/transaction attempt on each retry.
+ * - Never falls back to sessionless execution or MockDb after transaction startup or partial work.
  */
 export async function executeWithOptionalTransaction<T>(
   action: (session?: mongoose.ClientSession) => Promise<T>,
-  existingSession?: mongoose.ClientSession
+  sessionOrOptions?: mongoose.ClientSession | ExecuteTransactionOptions
 ): Promise<T> {
-  if (existingSession) {
-    return await action(existingSession);
+  const isSessionArg =
+    sessionOrOptions &&
+    typeof (sessionOrOptions as mongoose.ClientSession).inTransaction === 'function';
+
+  const options: ExecuteTransactionOptions = isSessionArg
+    ? { existingSession: sessionOrOptions as mongoose.ClientSession }
+    : ((sessionOrOptions as ExecuteTransactionOptions | undefined) ?? {});
+
+  if (options.existingSession) {
+    return await action(options.existingSession);
   }
-  let session: mongoose.ClientSession | null = null;
-  try {
-    if (mongoose.connection && mongoose.connection.readyState === 1) {
+
+  const topology = await detectMongoTransactionSupport();
+
+  if (!topology.supported) {
+    if (topology.reason === 'STANDALONE' && options.allowStandaloneFallback) {
+      return await action(undefined);
+    }
+
+    throw new TransactionUnavailableError(
+      `Multi-document MongoDB transaction unavailable (topology: ${topology.topologyType}, reason: ${topology.reason || 'UNSUPPORTED'}). A Replica Set, mongos, or MongoDB Atlas cluster is required.`,
+      topology.topologyType,
+      topology.reason || 'UNKNOWN'
+    );
+  }
+
+  const maxAttempts = Math.max(1, options.maxRetries ?? 3);
+  const maxCommitRetries = 3;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    let session: mongoose.ClientSession | null = null;
+    try {
       session = await mongoose.startSession();
       session.startTransaction();
+    } catch (startupErr) {
+      cachedSingleTopologyResult = null;
+      if (session) {
+        await session.endSession().catch(() => null);
+      }
+      throw startupErr;
     }
-  } catch {
-    session = null;
-  }
 
-  if (session && session.inTransaction()) {
     try {
       const result = await action(session);
-      await session.commitTransaction();
-      return result;
-    } catch (err) {
-      await session.abortTransaction().catch(() => null);
-      throw err;
+
+      if (isFailedActionResult(result)) {
+        if (session.inTransaction()) {
+          await session.abortTransaction().catch(() => null);
+        }
+        return result;
+      }
+
+      for (let commitAttempt = 1; commitAttempt <= maxCommitRetries; commitAttempt++) {
+        try {
+          await session.commitTransaction();
+          return result;
+        } catch (commitErr) {
+          if (isUnknownCommitResultError(commitErr) && commitAttempt < maxCommitRetries) {
+            continue;
+          }
+          throw commitErr;
+        }
+      }
+    } catch (txErr) {
+      if (session.inTransaction()) {
+        await session.abortTransaction().catch(() => null);
+      }
+
+      if (isTransientTransactionError(txErr) && attempt < maxAttempts) {
+        continue;
+      }
+
+      throw txErr;
     } finally {
-      session.endSession().catch(() => null);
+      await session.endSession().catch(() => null);
     }
   }
 
-  return await action();
+  throw new Error('Transaction exceeded maximum retry attempts.');
 }
 
 /**
@@ -80,7 +356,10 @@ export async function addCreditInternal(
 
     const isValidObjId = Boolean(cleanUserId && Types.ObjectId.isValid(cleanUserId));
 
-    if (!isDatabaseConnected() || !isValidObjId) {
+    if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable. Cannot adjust wallet balance.');
+      }
       const res = MockDb.adjustWallet(cleanUserId, Math.abs(amount), amount >= 0 ? 'credit' : 'debit', description, referenceId);
       try {
         revalidatePath('/dashboard/referrals');
@@ -94,86 +373,82 @@ export async function addCreditInternal(
       });
     }
 
-    return await executeWithOptionalTransaction(async (activeSession) => {
-      const currentSession = session || activeSession;
-      
-      // Idempotency check: if referenceId is provided, check for existing ledger entry
-      if (referenceId) {
-        const existingTx = await WalletTransaction.findOne({
-          userId: new Types.ObjectId(cleanUserId),
-          referenceId,
-          type: amount >= 0 ? 'credit' : 'debit',
-        }).session(currentSession || null);
-        if (existingTx) {
-          const user = await User.findById(cleanUserId).select('walletBalance').session(currentSession || null).lean();
-          return successResponse({
-            balance: user?.walletBalance || 0,
-            transaction: JSON.parse(JSON.stringify(existingTx)),
-          });
-        }
-      }
-
-      const updatedUser = await User.findByIdAndUpdate(
-        cleanUserId,
-        { $inc: { walletBalance: amount } },
-        { returnDocument: 'after', session: currentSession || undefined }
-      );
-
-      if (!updatedUser) {
-        const res = MockDb.adjustWallet(cleanUserId, Math.abs(amount), amount >= 0 ? 'credit' : 'debit', description, referenceId);
-        return successResponse({
-          balance: res.balance,
-          transaction: res.tx as IWalletTransaction,
-        });
-      }
-
-      const newBalance = Math.max(0, updatedUser.walletBalance || 0);
-
-      let transaction;
-      try {
-        const createdDocs = await WalletTransaction.create(
-          [
-            {
-              userId: new Types.ObjectId(cleanUserId),
-              amount: Math.abs(amount),
-              type: amount >= 0 ? 'credit' : 'debit',
-              description,
-              referenceId: referenceId || undefined,
-              balanceAfter: newBalance,
-              status,
-            },
-          ],
-          currentSession ? { session: currentSession } : {}
-        );
-        transaction = createdDocs[0];
-      } catch (txErr) {
-        // Compensating rollback if ledger transaction creation fails outside session transaction
-        if (!currentSession) {
-          await User.findByIdAndUpdate(cleanUserId, { $inc: { walletBalance: -amount } });
-        }
-        throw txErr;
-      }
-
-      try {
-        revalidatePath('/dashboard/referrals');
-        revalidatePath('/admin');
-      } catch {
-        // Ignored during testing or background execution
-      }
-
-      return successResponse({
-        balance: newBalance,
-        transaction: JSON.parse(JSON.stringify(transaction)),
-      });
-    }, session);
-  } catch (error: unknown) {
-    if (!isDatabaseConnected()) {
-      const res = MockDb.adjustWallet(userId, Math.abs(amount), amount >= 0 ? 'credit' : 'debit', description, referenceId);
-      return successResponse({
-        balance: res.balance,
-        transaction: res.tx as IWalletTransaction,
-      });
+    if (!isValidObjId) {
+      return errorResponse('Invalid user ID format.');
     }
+
+    return await executeWithOptionalTransaction(
+      async (activeSession) => {
+        const currentSession = session || activeSession;
+
+        // Idempotency check: if referenceId is provided, check for existing ledger entry
+        if (referenceId) {
+          const existingTx = await WalletTransaction.findOne({
+            userId: new Types.ObjectId(cleanUserId),
+            referenceId,
+            type: amount >= 0 ? 'credit' : 'debit',
+          }).session(currentSession || null);
+          if (existingTx) {
+            const user = await User.findById(cleanUserId).select('walletBalance').session(currentSession || null).lean();
+            return successResponse({
+              balance: user?.walletBalance || 0,
+              transaction: JSON.parse(JSON.stringify(existingTx)),
+            });
+          }
+        }
+
+        const updatedUser = await User.findByIdAndUpdate(
+          cleanUserId,
+          { $inc: { walletBalance: amount } },
+          { returnDocument: 'after', session: currentSession || undefined }
+        );
+
+        if (!updatedUser) {
+          return errorResponse('User account not found.');
+        }
+
+        const newBalance = Math.max(0, updatedUser.walletBalance || 0);
+
+        let transaction;
+        try {
+          const createdDocs = await WalletTransaction.create(
+            [
+              {
+                userId: new Types.ObjectId(cleanUserId),
+                amount: Math.abs(amount),
+                type: amount >= 0 ? 'credit' : 'debit',
+                description,
+                referenceId: referenceId || undefined,
+                balanceAfter: newBalance,
+                status,
+              },
+            ],
+            currentSession ? { session: currentSession } : {}
+          );
+          transaction = createdDocs[0];
+        } catch (txErr) {
+          // Compensating rollback if ledger transaction creation fails in explicit standalone mode
+          if (!currentSession) {
+            await User.findByIdAndUpdate(cleanUserId, { $inc: { walletBalance: -amount } });
+          }
+          throw txErr;
+        }
+
+        try {
+          revalidatePath('/dashboard/referrals');
+          revalidatePath('/admin');
+        } catch {
+          // Ignored during testing or background execution
+        }
+
+        return successResponse({
+          balance: newBalance,
+          transaction: JSON.parse(JSON.stringify(transaction)),
+        });
+      },
+      { existingSession: session, allowStandaloneFallback: true }
+    );
+  } catch (error: unknown) {
     return handleActionError(error);
   }
 }
@@ -203,7 +478,10 @@ export async function deductCreditInternal(
 
     const isValidObjId = Boolean(cleanUserId && Types.ObjectId.isValid(cleanUserId));
 
-    if (!isDatabaseConnected() || !isValidObjId) {
+    if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable. Cannot deduct wallet balance.');
+      }
       const current = MockDb.getWalletBalance(cleanUserId);
       if (current < amount) {
         return errorResponse(`Insufficient wallet balance. Available: PKR ${current}`);
@@ -221,79 +499,86 @@ export async function deductCreditInternal(
       });
     }
 
-    return await executeWithOptionalTransaction(async (activeSession) => {
-      const currentSession = session || activeSession;
-      
-      // Debit Idempotency: prevent double-deduction on retries/concurrent requests with same referenceId
-      if (referenceId) {
-        const existingTx = await WalletTransaction.findOne({
-          userId: new Types.ObjectId(cleanUserId),
-          referenceId,
-          type: 'debit',
-        }).session(currentSession || null);
-        if (existingTx) {
-          const user = await User.findById(cleanUserId).select('walletBalance').session(currentSession || null).lean();
-          return successResponse({
-            balance: user?.walletBalance || 0,
-            transaction: JSON.parse(JSON.stringify(existingTx)),
-          });
+    if (!isValidObjId) {
+      return errorResponse('Invalid user ID format.');
+    }
+
+    return await executeWithOptionalTransaction(
+      async (activeSession) => {
+        const currentSession = session || activeSession;
+
+        // Debit Idempotency: prevent double-deduction on retries/concurrent requests with same referenceId
+        if (referenceId) {
+          const existingTx = await WalletTransaction.findOne({
+            userId: new Types.ObjectId(cleanUserId),
+            referenceId,
+            type: 'debit',
+          }).session(currentSession || null);
+          if (existingTx) {
+            const user = await User.findById(cleanUserId).select('walletBalance').session(currentSession || null).lean();
+            return successResponse({
+              balance: user?.walletBalance || 0,
+              transaction: JSON.parse(JSON.stringify(existingTx)),
+            });
+          }
         }
-      }
 
-      // Atomic Balance Deduction: Update only if walletBalance is sufficient ($gte: amount)
-      const updatedUser = await User.findOneAndUpdate(
-        { _id: new Types.ObjectId(cleanUserId), walletBalance: { $gte: amount } },
-        { $inc: { walletBalance: -amount } },
-        { returnDocument: 'after', session: currentSession || undefined }
-      );
-
-      if (!updatedUser) {
-        const userCheck = await User.findById(cleanUserId).select('walletBalance').session(currentSession || null).lean();
-        if (!userCheck) {
-          return errorResponse('User account not found.');
-        }
-        const currentBal = userCheck.walletBalance || 0;
-        return errorResponse(`Insufficient wallet balance. Available: PKR ${currentBal}`);
-      }
-
-      const newBalance = Math.max(0, updatedUser.walletBalance || 0);
-
-      let transaction;
-      try {
-        const createdDocs = await WalletTransaction.create(
-          [
-            {
-              userId: new Types.ObjectId(cleanUserId),
-              amount,
-              type: 'debit',
-              description,
-              referenceId: referenceId || undefined,
-              balanceAfter: newBalance,
-            },
-          ],
-          currentSession ? { session: currentSession } : {}
+        // Atomic Balance Deduction: Update only if walletBalance is sufficient ($gte: amount)
+        const updatedUser = await User.findOneAndUpdate(
+          { _id: new Types.ObjectId(cleanUserId), walletBalance: { $gte: amount } },
+          { $inc: { walletBalance: -amount } },
+          { returnDocument: 'after', session: currentSession || undefined }
         );
-        transaction = createdDocs[0];
-      } catch (txErr) {
-        // Compensating rollback if ledger transaction creation fails outside session transaction
-        if (!currentSession) {
-          await User.findByIdAndUpdate(cleanUserId, { $inc: { walletBalance: amount } });
+
+        if (!updatedUser) {
+          const userCheck = await User.findById(cleanUserId).select('walletBalance').session(currentSession || null).lean();
+          if (!userCheck) {
+            return errorResponse('User account not found.');
+          }
+          const currentBal = userCheck.walletBalance || 0;
+          return errorResponse(`Insufficient wallet balance. Available: PKR ${currentBal}`);
         }
-        throw txErr;
-      }
 
-      try {
-        revalidatePath('/dashboard/referrals');
-        revalidatePath('/admin');
-      } catch {
-        // Ignored during testing
-      }
+        const newBalance = Math.max(0, updatedUser.walletBalance || 0);
 
-      return successResponse({
-        balance: newBalance,
-        transaction: JSON.parse(JSON.stringify(transaction)),
-      });
-    });
+        let transaction;
+        try {
+          const createdDocs = await WalletTransaction.create(
+            [
+              {
+                userId: new Types.ObjectId(cleanUserId),
+                amount,
+                type: 'debit',
+                description,
+                referenceId: referenceId || undefined,
+                balanceAfter: newBalance,
+              },
+            ],
+            currentSession ? { session: currentSession } : {}
+          );
+          transaction = createdDocs[0];
+        } catch (txErr) {
+          // Compensating rollback if ledger transaction creation fails in explicit standalone mode
+          if (!currentSession) {
+            await User.findByIdAndUpdate(cleanUserId, { $inc: { walletBalance: amount } });
+          }
+          throw txErr;
+        }
+
+        try {
+          revalidatePath('/dashboard/referrals');
+          revalidatePath('/admin');
+        } catch {
+          // Ignored during testing
+        }
+
+        return successResponse({
+          balance: newBalance,
+          transaction: JSON.parse(JSON.stringify(transaction)),
+        });
+      },
+      { existingSession: session, allowStandaloneFallback: true }
+    );
   } catch (error: unknown) {
     return handleActionError(error);
   }

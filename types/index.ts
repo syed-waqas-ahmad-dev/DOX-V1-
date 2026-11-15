@@ -247,16 +247,24 @@ export interface IOrderItem {
   sku: string;
 }
 
+export interface IDeliveryCoordinates {
+  lat: number;
+  lng: number;
+  source?: 'manual_pin';
+}
+
 /**
  * Immutable shipping snapshot on Order
  */
 export interface IOrderShippingAddress {
   fullName: string;
   phone: string;
-  villageAddress: string;
+  villageAddress?: string;
   address: string;
+  street?: string;
   city: string;
-  postalCode: string;
+  postalCode?: string;
+  coordinates?: IDeliveryCoordinates;
 }
 
 /**
@@ -758,6 +766,8 @@ export interface AdminDashboardMetrics {
 export interface CreateOrderPayload {
   items: Array<{
     productId: string;
+    variantId?: string;
+    variantSku?: string;
     size: string;
     color: string;
     quantity: number;
@@ -768,10 +778,12 @@ export interface CreateOrderPayload {
     shippingAddress: {
       fullName: string;
       phone: string;
-      villageAddress: string;
+      villageAddress?: string;
       address: string;
+      street?: string;
       city: string;
       postalCode?: string;
+      coordinates?: IDeliveryCoordinates;
     };
     paymentMethod: PaymentMethod | string;
     couponCode?: string;
@@ -868,6 +880,9 @@ export interface IDeliveryAssignment {
   codAmount: number;
   codCollected: boolean;
   deliveryAddress: string;
+  villageAddress?: string;
+  postalCode?: string;
+  deliveryCoordinates?: IDeliveryCoordinates;
   city: string;
   customerName: string;
   customerPhone: string;
@@ -949,6 +964,8 @@ export interface ITrackOrderDTO {
   totalAmount: number;
   courier?: string;
   trackingNumber?: string;
+  destinationCity?: string;
+  destinationCoordinates?: IDeliveryCoordinates;
   orderItems: Array<{
     name: string;
     size: string;

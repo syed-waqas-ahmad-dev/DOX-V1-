@@ -9,8 +9,11 @@
 import React from 'react';
 import dynamic from 'next/dynamic';
 
-interface OrderTransitMapProps {
-  destinationCity: string;
+import type { IDeliveryCoordinates } from '@/types';
+
+export interface OrderTransitMapProps {
+  destinationCity?: string;
+  destinationCoordinates?: IDeliveryCoordinates | null;
   orderNumber: string;
   courierName?: string;
   trackingNumber?: string;

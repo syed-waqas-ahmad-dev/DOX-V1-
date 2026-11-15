@@ -48,6 +48,18 @@ const orderItemSchema = new Schema<IOrderItem>(
 );
 
 /**
+ * Optional customer-confirmed delivery pin coordinates
+ */
+const deliveryCoordinatesSchema = new Schema(
+  {
+    lat: { type: Number, required: true, min: -90, max: 90 },
+    lng: { type: Number, required: true, min: -180, max: 180 },
+    source: { type: String, enum: ['manual_pin'], default: 'manual_pin' },
+  },
+  { _id: false }
+);
+
+/**
  * Immutable recipient shipping destination
  */
 const orderShippingAddressSchema = new Schema(
@@ -58,10 +70,12 @@ const orderShippingAddressSchema = new Schema(
       required: true,
       match: [/^\+923\d{9}$/, 'Must be a valid Pakistani mobile number (+923XXXXXXXXX)'],
     },
+    villageAddress: { type: String, trim: true, default: '' },
     address: { type: String, trim: true, default: '' },
-    street: { type: String, trim: true },
+    street: { type: String, trim: true, default: '' },
     city: { type: String, required: true, trim: true },
-    postalCode: { type: String, required: true, trim: true },
+    postalCode: { type: String, trim: true, default: '' },
+    coordinates: { type: deliveryCoordinatesSchema, required: false },
   },
   { _id: false }
 );

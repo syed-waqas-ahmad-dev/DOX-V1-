@@ -9,10 +9,15 @@
 import React from 'react';
 import dynamic from 'next/dynamic';
 
-interface CheckoutAddressMapProps {
+import type { IDeliveryCoordinates } from '@/types';
+
+export interface CheckoutAddressMapProps {
   selectedCity: string;
+  villageAddress?: string;
   streetAddress: string;
-  onLocationConfirmed?: (coords: { lat: number; lng: number }) => void;
+  postalCode?: string;
+  confirmedLocation?: IDeliveryCoordinates | null;
+  onLocationConfirmed?: (coords: IDeliveryCoordinates | null) => void;
 }
 
 const CheckoutAddressMapComponent = dynamic(

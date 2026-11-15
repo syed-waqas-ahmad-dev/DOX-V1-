@@ -24,17 +24,24 @@ export const signupSchema = z.object({
 });
 export type SignupInput = z.infer<typeof signupSchema>;
 
+export const deliveryCoordinatesSchema = z.object({
+  lat: z.number().finite().min(-90, 'Latitude must be between -90 and 90').max(90, 'Latitude must be between -90 and 90'),
+  lng: z.number().finite().min(-180, 'Longitude must be between -180 and 180').max(180, 'Longitude must be between -180 and 180'),
+  source: z.literal('manual_pin').optional().default('manual_pin'),
+});
+
 export const addressSchema = z.object({
   label: z.string().min(1, 'Label is required (e.g. Home, Office)').max(50),
   fullName: z.string().min(2, 'Recipient full name is required').max(100),
   phone: z
     .string()
     .regex(/^\+923\d{9}$/, 'Must be a valid Pakistani mobile number (+923XXXXXXXXX)'),
-  street: z.string().optional().default(''),
-  address: z.string().optional(),
-  villageAddress: z.string().optional(),
-  city: z.string().min(2, 'City is required'),
-  postalCode: z.string().min(2, 'Postal code is required').optional().default('54000'),
+  street: z.string().trim().optional().default(''),
+  address: z.string().trim().optional(),
+  villageAddress: z.string().trim().optional().default(''),
+  city: z.string().trim().min(2, 'City is required'),
+  postalCode: z.string().trim().optional().default(''),
+  coordinates: deliveryCoordinatesSchema.optional(),
   isDefault: z.boolean().default(false),
 });
 export type AddressInput = z.infer<typeof addressSchema>;

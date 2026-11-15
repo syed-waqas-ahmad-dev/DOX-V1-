@@ -742,7 +742,7 @@ export async function seedDatabase(wipeExisting = true): Promise<SeedResult> {
       category: ProductCategory.MEN,
       subCategory: ProductSubCategory.JOGGERS,
       brand: ProductBrand.SERVIS,
-      sizes: ['40', '41', '42', '43', '44'],
+      sizes: ['41', '42', '43'],
       colors: [{ name: 'Charcoal Neon', hex: '#333333' }],
       variants: [
         { size: '41', color: 'Charcoal Neon', stock: 18, sku: 'OX-JOG-010-41-NEO' },
@@ -1168,7 +1168,7 @@ export async function seedDatabase(wipeExisting = true): Promise<SeedResult> {
     },
   ];
 
-  // Prepare products with calculated slug, discount, and aggregated stock
+  // Prepare products with calculated slug, discount, metadata consistency, and aggregated stock
   const preparedProducts = productDefinitions.map((p) => {
     const slugBase = p.name
       .toLowerCase()
@@ -1178,10 +1178,25 @@ export async function seedDatabase(wipeExisting = true): Promise<SeedResult> {
       p.originalPrice > 0 && p.price <= p.originalPrice
         ? Math.round(((p.originalPrice - p.price) / p.originalPrice) * 100)
         : 0;
-    const totalStock = p.variants?.reduce((tot, v) => tot + (v.stock || 0), 0) || 50;
+    const hasVariants = Array.isArray(p.variants) && p.variants.length > 0;
+    const totalStock = hasVariants
+      ? p.variants.reduce((tot, v) => tot + Math.max(0, v.stock || 0), 0)
+      : 50;
+    const consistentSizes = hasVariants
+      ? p.sizes.filter((sz) =>
+          p.variants.some((v) => v.size.trim().toLowerCase() === sz.trim().toLowerCase())
+        )
+      : p.sizes;
+    const consistentColors = hasVariants
+      ? p.colors.filter((c) =>
+          p.variants.some((v) => v.color.trim().toLowerCase() === c.name.trim().toLowerCase())
+        )
+      : p.colors;
 
     return {
       ...p,
+      sizes: consistentSizes.length > 0 ? consistentSizes : p.sizes,
+      colors: consistentColors.length > 0 ? consistentColors : p.colors,
       slug: (p as { slug?: string }).slug || `${slugBase}`,
       discount,
       stock: totalStock,

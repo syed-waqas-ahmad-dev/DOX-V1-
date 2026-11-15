@@ -12,7 +12,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
-import { useCartStore } from '@/lib/store/cart';
+import { buildCheckoutOrderItems, useCartStore } from '@/lib/store/cart';
 import { useLocale } from '@/lib/store/locale';
 import { useHydrated } from '@/lib/hooks/useHydrated';
 import { Header } from '@/components/layout/Header';
@@ -21,7 +21,7 @@ import { Footer } from '@/components/layout/Footer';
 import { formatPKR } from '@/lib/formatters/currency';
 import { calculateOrderTotals } from '@/lib/pricing';
 import { cityOptions, PAYMENT_METHOD_DETAILS } from '@/lib/constants';
-import { PaymentMethod } from '@/types';
+import { PaymentMethod, type IDeliveryCoordinates } from '@/types';
 import { createOrder } from '@/actions/order.actions';
 import { CheckoutAddressMap } from '@/components/maps/CheckoutAddressMap';
 import {
@@ -55,8 +55,24 @@ export default function CheckoutPage() {
   const [villageAddress, setVillageAddress] = useState('');
   const [street, setStreet] = useState('');
   const [city, setCity] = useState('Lahore');
+  const [customCity, setCustomCity] = useState('');
   const [postalCode, setPostalCode] = useState('54000');
+  const [hasEditedPostalCode, setHasEditedPostalCode] = useState(false);
   const [notes, setNotes] = useState('');
+  const [deliveryLocation, setDeliveryLocation] = useState<IDeliveryCoordinates | null>(null);
+
+  const effectiveCity = city === 'Other' ? customCity.trim() : city;
+
+  const handleCitySelectChange = (nextCity: string) => {
+    setCity(nextCity);
+    if (nextCity !== 'Other') {
+      setCustomCity('');
+    }
+    setDeliveryLocation(null);
+    if (!hasEditedPostalCode && postalCode === '54000' && nextCity !== 'Lahore') {
+      setPostalCode('');
+    }
+  };
 
   // Payment Method
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(PaymentMethod.COD);
@@ -71,7 +87,7 @@ export default function CheckoutPage() {
   const totalWeight = items.reduce((sum, item) => sum + (item.weight || 750) * item.quantity, 0);
   const pricing = calculateOrderTotals(
     items.map((i) => ({ price: i.price, quantity: i.quantity })),
-    city,
+    effectiveCity || city,
     totalWeight,
     appliedCoupon
       ? {
@@ -88,7 +104,7 @@ export default function CheckoutPage() {
       return;
     }
 
-    if (!fullName.trim() || !phone.trim() || !street.trim() || !villageAddress.trim()) {
+    if (!fullName.trim() || !phone.trim() || !street.trim() || !villageAddress.trim() || !effectiveCity) {
       setErrorMsg('Please complete all recipient shipping details.');
       setStep(1);
       return;
@@ -104,20 +120,17 @@ export default function CheckoutPage() {
     setErrorMsg(null);
 
     const res = await createOrder({
-      items: items.map((i) => ({
-        productId: i.productId,
-        size: i.size,
-        color: i.color,
-        quantity: i.quantity,
-      })),
+      items: buildCheckoutOrderItems(items),
       checkoutData: {
         shippingAddress: {
           fullName,
           phone,
           villageAddress,
           address: street,
-          city,
-          postalCode,
+          street,
+          city: effectiveCity,
+          postalCode: postalCode.trim(),
+          ...(deliveryLocation ? { coordinates: deliveryLocation } : {}),
         },
         paymentMethod,
         couponCode: appliedCoupon?.code,
@@ -253,7 +266,7 @@ export default function CheckoutPage() {
                   </label>
                   <select
                     value={city}
-                    onChange={(e) => setCity(e.target.value)}
+                    onChange={(e) => handleCitySelectChange(e.target.value)}
                     className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-300 focus:outline-none focus:ring-1 focus:ring-neutral-950 font-medium bg-white"
                   >
                     {cityOptions.map((c) => (
@@ -266,7 +279,11 @@ export default function CheckoutPage() {
                     <input
                       type="text"
                       placeholder="Please enter your city name"
-                      onChange={(e) => setCity(e.target.value)}
+                      value={customCity}
+                      onChange={(e) => {
+                        setCustomCity(e.target.value);
+                        setDeliveryLocation(null);
+                      }}
                       className="w-full px-3.5 py-2.5 mt-2 rounded-xl border border-neutral-300 focus:outline-none focus:ring-1 focus:ring-neutral-950 font-medium"
                     />
                   )}
@@ -305,9 +322,12 @@ export default function CheckoutPage() {
                   <label className="font-bold text-neutral-700 block mb-1">Postal Code</label>
                   <input
                     type="text"
-                    placeholder="54000"
+                    placeholder="e.g. 18500"
                     value={postalCode}
-                    onChange={(e) => setPostalCode(e.target.value)}
+                    onChange={(e) => {
+                      setHasEditedPostalCode(true);
+                      setPostalCode(e.target.value);
+                    }}
                     className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-300 focus:outline-none focus:ring-1 focus:ring-neutral-950 font-medium"
                   />
                 </div>
@@ -324,9 +344,16 @@ export default function CheckoutPage() {
                 </div>
               </div>
 
-              {/* Interactive Google Map Address Verification */}
+              {/* Interactive OpenStreetMap Address Verification */}
               <div className="pt-2 border-t border-neutral-100">
-                <CheckoutAddressMap selectedCity={city} streetAddress={street} />
+                <CheckoutAddressMap
+                  selectedCity={effectiveCity}
+                  villageAddress={villageAddress}
+                  streetAddress={street}
+                  postalCode={postalCode}
+                  confirmedLocation={deliveryLocation}
+                  onLocationConfirmed={setDeliveryLocation}
+                />
               </div>
             </div>
 
@@ -448,7 +475,7 @@ export default function CheckoutPage() {
                 </div>
 
                 <div className="flex justify-between">
-                  <span>Courier Shipping ({city})</span>
+                  <span>Courier Shipping ({effectiveCity || 'Select City'})</span>
                   <span className="font-semibold text-neutral-950">
                     {pricing.shippingCharges === 0 ? 'FREE' : formatPKR(pricing.shippingCharges)}
                   </span>

@@ -8,7 +8,6 @@
  * Strict TypeScript: ZERO `any`.
  */
 
-import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { useCartStore } from '@/lib/store/cart';
@@ -35,12 +34,48 @@ export function ProductCard({ product }: ProductCardProps) {
   const primaryImage =
     product.images?.[0] ||
     'https://images.unsplash.com/photo-1549298916-b41d501d3772?auto=format&fit=crop&w=800&q=80';
-  const defaultSize = product.sizes?.[0] || '41';
+
+  const hasVariants = Array.isArray(product.variants) && product.variants.length > 0;
+  const availableVariants = hasVariants
+    ? product.variants.filter((v) => (v.stock || 0) > 0)
+    : [];
+  const isOutOfStock = hasVariants
+    ? availableVariants.length === 0
+    : (product.stock || 0) <= 0;
+  const singleAvailableVariant =
+    hasVariants && product.variants.length === 1 && availableVariants.length === 1
+      ? availableVariants[0]
+      : null;
+  const requiresVariantSelection =
+    hasVariants && availableVariants.length > 0 && !singleAvailableVariant;
+
+  const defaultSize = product.sizes?.[0] || 'Standard';
   const defaultColor = product.colors?.[0]?.name || 'Standard';
 
   const handleQuickAdd = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
+
+    if (isOutOfStock || requiresVariantSelection) return;
+
+    if (singleAvailableVariant) {
+      addItem({
+        productId: product._id.toString(),
+        variantId: singleAvailableVariant._id?.toString(),
+        variantSku: singleAvailableVariant.sku,
+        name: product.name,
+        nameUr: product.nameUr,
+        image: primaryImage,
+        size: singleAvailableVariant.size,
+        color: singleAvailableVariant.color,
+        price: product.price,
+        originalPrice: product.originalPrice,
+        sku: singleAvailableVariant.sku || product.sku,
+        weight: product.weight || 750,
+        quantity: 1,
+      });
+      return;
+    }
 
     addItem({
       productId: product._id.toString(),
@@ -123,16 +158,34 @@ export function ProductCard({ product }: ProductCardProps) {
           </button>
         </div>
 
-        {/* Quick Add Overlay on Hover */}
+        {/* Quick Add / Select Size / Out of Stock Overlay */}
         <div className="absolute inset-x-2 bottom-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-          <button
-            type="button"
-            onClick={handleQuickAdd}
-            className="w-full py-2.5 px-4 rounded-full bg-white/95 hover:bg-neutral-950 hover:text-white text-neutral-950 text-xs font-bold uppercase tracking-wider shadow-lg flex items-center justify-center gap-1.5 transition-all"
-          >
-            <ShoppingBag className="h-3.5 w-3.5" />
-            <span>{currentIsUrdu ? 'کارٹ میں شامل کریں' : 'Quick Add'}</span>
-          </button>
+          {isOutOfStock ? (
+            <button
+              type="button"
+              disabled
+              className="w-full py-2.5 px-4 rounded-full bg-neutral-200/95 text-neutral-500 text-xs font-bold uppercase tracking-wider shadow-lg flex items-center justify-center gap-1.5 cursor-not-allowed"
+            >
+              <span>{currentIsUrdu ? 'اسٹاک ختم' : 'Out of Stock'}</span>
+            </button>
+          ) : requiresVariantSelection ? (
+            <Link
+              href={`/product/${product.slug}`}
+              className="w-full py-2.5 px-4 rounded-full bg-white/95 hover:bg-neutral-950 hover:text-white text-neutral-950 text-xs font-bold uppercase tracking-wider shadow-lg flex items-center justify-center gap-1.5 transition-all"
+            >
+              <ShoppingBag className="h-3.5 w-3.5" />
+              <span>{currentIsUrdu ? 'سائز منتخب کریں' : 'Select Size'}</span>
+            </Link>
+          ) : (
+            <button
+              type="button"
+              onClick={handleQuickAdd}
+              className="w-full py-2.5 px-4 rounded-full bg-white/95 hover:bg-neutral-950 hover:text-white text-neutral-950 text-xs font-bold uppercase tracking-wider shadow-lg flex items-center justify-center gap-1.5 transition-all"
+            >
+              <ShoppingBag className="h-3.5 w-3.5" />
+              <span>{currentIsUrdu ? 'کارٹ میں شامل کریں' : 'Quick Add'}</span>
+            </button>
+          )}
         </div>
       </div>
 

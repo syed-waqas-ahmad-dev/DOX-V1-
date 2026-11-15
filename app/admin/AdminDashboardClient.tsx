@@ -205,6 +205,13 @@ export default function AdminDashboardClient({
   const [selectedLabelOrder, setSelectedLabelOrder] = useState<IOrder | null>(null);
   const [showAddProductModal, setShowAddProductModal] = useState<boolean>(false);
   const [editingProduct, setEditingProduct] = useState<IProduct | null>(null);
+  const [newEditVariant, setNewEditVariant] = useState<{ size: string; color: string; sku: string; stock: string }>({
+    size: '',
+    color: '',
+    sku: '',
+    stock: '0',
+  });
+  const [editVariantError, setEditVariantError] = useState<string | null>(null);
   const [showAddCouponModal, setShowAddCouponModal] = useState<boolean>(false);
   const [showAddBannerModal, setShowAddBannerModal] = useState<boolean>(false);
   const [actionNotice, setActionNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -517,10 +524,10 @@ export default function AdminDashboardClient({
     setAssigningOrder(order);
     setReassigningAssignment(existingAssignment || null);
     setCandidateRidersLoading(true);
-    const shipAddr = order.shippingAddress as unknown as Record<string, string> | undefined;
-    const city = shipAddr?.city || 'Peshawar';
+    const city = order.shippingAddress?.city || '';
+    const coords = order.shippingAddress?.coordinates || null;
     try {
-      const res = await getActiveRidersForCity(city);
+      const res = await getActiveRidersForCity(city, coords);
       if (res.success && res.data) {
         setCandidateRiders(res.data);
       }
@@ -680,6 +687,8 @@ export default function AdminDashboardClient({
         prev.map((p) => (p._id.toString() === productId ? (res.data as IProduct) : p))
       );
       setEditingProduct(null);
+      setEditVariantError(null);
+      setNewEditVariant({ size: '', color: '', sku: '', stock: '0' });
       showNotification('Product updated successfully!');
     } else {
       showNotification(res.error || 'Failed to update product', 'error');
@@ -1966,41 +1975,69 @@ export default function AdminDashboardClient({
                             )}
                           </td>
                           <td className="py-3.5 px-3">
-                            <div className="flex items-center gap-2">
-                              <span
-                                className={`font-mono font-bold ${
-                                  prod.stock <= 5 ? 'text-red-400' : 'text-neutral-200'
-                                }`}
-                              >
-                                {prod.stock} units
-                              </span>
-                              <div className="inline-flex rounded-lg border border-neutral-700 bg-neutral-800 text-[10px] overflow-hidden">
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    handleUpdateProduct(prod._id.toString(), {
-                                      stock: Math.max(0, prod.stock - 1),
-                                    })
-                                  }
-                                  className="px-2 py-0.5 hover:bg-neutral-700 text-neutral-300"
-                                  title="Decrease Stock"
-                                >
-                                  -
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    handleUpdateProduct(prod._id.toString(), {
-                                      stock: prod.stock + 1,
-                                    })
-                                  }
-                                  className="px-2 py-0.5 hover:bg-neutral-700 text-neutral-300"
-                                  title="Increase Stock"
-                                >
-                                  +
-                                </button>
-                              </div>
-                            </div>
+                            {(() => {
+                              const hasVariants = Array.isArray(prod.variants) && prod.variants.length > 0;
+                              const hasLowVariant =
+                                hasVariants &&
+                                prod.variants.some((v) => (v.stock || 0) <= (prod.lowStockThreshold || 5));
+                              const isLow = hasVariants ? hasLowVariant : prod.stock <= 5;
+                              const displayStock = hasVariants
+                                ? prod.variants.reduce((sum, v) => sum + Math.max(0, v.stock || 0), 0)
+                                : prod.stock;
+
+                              return (
+                                <div className="flex items-center gap-2">
+                                  <span
+                                    className={`font-mono font-bold ${
+                                      isLow ? 'text-red-400' : 'text-neutral-200'
+                                    }`}
+                                  >
+                                    {displayStock} units
+                                  </span>
+                                  {hasVariants ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setEditVariantError(null);
+                                        setNewEditVariant({ size: '', color: '', sku: '', stock: '0' });
+                                        setEditingProduct(prod);
+                                      }}
+                                      className="px-2 py-0.5 rounded-lg border border-neutral-700 bg-neutral-800 hover:bg-neutral-700 text-[10px] text-amber-400 font-bold"
+                                      title="Manage stock by size and color variant"
+                                    >
+                                      By Variant
+                                    </button>
+                                  ) : (
+                                    <div className="inline-flex rounded-lg border border-neutral-700 bg-neutral-800 text-[10px] overflow-hidden">
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          handleUpdateProduct(prod._id.toString(), {
+                                            stock: Math.max(0, prod.stock - 1),
+                                          })
+                                        }
+                                        className="px-2 py-0.5 hover:bg-neutral-700 text-neutral-300"
+                                        title="Decrease Stock"
+                                      >
+                                        -
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          handleUpdateProduct(prod._id.toString(), {
+                                            stock: prod.stock + 1,
+                                          })
+                                        }
+                                        className="px-2 py-0.5 hover:bg-neutral-700 text-neutral-300"
+                                        title="Increase Stock"
+                                      >
+                                        +
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })()}
                           </td>
                           <td className="py-3.5 px-3">
                             <button
@@ -2023,7 +2060,11 @@ export default function AdminDashboardClient({
                             <div className="flex items-center justify-end gap-2">
                               <button
                                 type="button"
-                                onClick={() => setEditingProduct(prod)}
+                                onClick={() => {
+                                  setEditVariantError(null);
+                                  setNewEditVariant({ size: '', color: '', sku: '', stock: '0' });
+                                  setEditingProduct(prod);
+                                }}
                                 className="w-8 h-8 flex items-center justify-center rounded-lg bg-neutral-800 hover:bg-neutral-700 text-amber-400 transition-colors"
                                 title="Edit Shoe"
                               >
@@ -2749,14 +2790,17 @@ export default function AdminDashboardClient({
       {/* MODAL: EDIT PRODUCT */}
       {editingProduct && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-6 max-w-lg w-full space-y-4 shadow-2xl text-xs">
+          <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-6 max-w-lg w-full space-y-4 shadow-2xl text-xs max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-neutral-800 pb-3">
               <h3 className="text-base font-black uppercase text-white">
                 Edit: {editingProduct.name}
               </h3>
               <button
                 type="button"
-                onClick={() => setEditingProduct(null)}
+                onClick={() => {
+                  setEditingProduct(null);
+                  setEditVariantError(null);
+                }}
                 className="text-neutral-400 hover:text-white"
               >
                 <X className="h-5 w-5" />
@@ -2796,42 +2840,154 @@ export default function AdminDashboardClient({
                 />
               </div>
 
-              {/* Size-wise Variant Inventory */}
+              {/* Size & Color Variant Inventory */}
               {editingProduct.variants && editingProduct.variants.length > 0 ? (
-                <div className="space-y-2 p-3 rounded-2xl bg-neutral-950 border border-neutral-800">
+                <div className="space-y-3 p-3 rounded-2xl bg-neutral-950 border border-neutral-800">
                   <div className="flex items-center justify-between">
                     <span className="font-black uppercase tracking-wider text-amber-500 text-[11px]">
-                      Size-Wise Inventory
+                      Variant Inventory (Size &amp; Color)
                     </span>
                     <span className="text-[11px] font-mono text-neutral-400">
-                      Total: <strong className="text-white">{editingProduct.stock}</strong> units
+                      Total: <strong className="text-white">{editingProduct.variants.reduce((acc, item) => acc + Math.max(0, item.stock || 0), 0)}</strong> units
                     </span>
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
                     {editingProduct.variants.map((v, idx) => (
-                      <div key={v.sku || `${v.size}-${idx}`} className="flex items-center justify-between bg-neutral-900 border border-neutral-800 px-2.5 py-1.5 rounded-xl">
-                        <span className="font-bold text-neutral-300 text-xs">
-                          Size {v.size}
-                        </span>
+                      <div key={v.sku || `${v.size}-${v.color}-${idx}`} className="flex items-center justify-between gap-2 bg-neutral-900 border border-neutral-800 px-2.5 py-2 rounded-xl">
+                        <div className="min-w-0">
+                          <span className="font-bold text-neutral-200 text-xs block truncate">
+                            Size {v.size} • {v.color}
+                          </span>
+                          <span className="text-[10px] font-mono text-neutral-500 block truncate">
+                            {v.sku}
+                          </span>
+                        </div>
                         <input
                           type="number"
                           min="0"
+                          step="1"
                           value={v.stock}
                           onChange={(e) => {
-                            const newStock = Math.max(0, Number(e.target.value));
+                            const parsed = Number(e.target.value);
+                            const newStock = Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : 0;
                             const updatedVars = [...editingProduct.variants];
                             updatedVars[idx] = { ...updatedVars[idx], stock: newStock };
-                            const sum = updatedVars.reduce((acc, item) => acc + (item.stock || 0), 0);
+                            const sum = updatedVars.reduce((acc, item) => acc + Math.max(0, item.stock || 0), 0);
                             setEditingProduct({
                               ...editingProduct,
                               variants: updatedVars,
                               stock: sum,
                             });
                           }}
-                          className="w-16 px-2 py-1 text-center rounded-lg bg-neutral-950 border border-neutral-700 text-white font-mono text-xs focus:outline-none focus:border-amber-500"
+                          className="w-16 shrink-0 px-2 py-1 text-center rounded-lg bg-neutral-950 border border-neutral-700 text-white font-mono text-xs focus:outline-none focus:border-amber-500"
                         />
                       </div>
                     ))}
+                  </div>
+
+                  <div className="pt-2 border-t border-neutral-800 space-y-2">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-400 block">
+                      Add Variant (Explicit Size, Color, SKU &amp; Stock)
+                    </span>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <input
+                        type="text"
+                        placeholder="Size (e.g. 40)"
+                        value={newEditVariant.size}
+                        onChange={(e) => setNewEditVariant({ ...newEditVariant, size: e.target.value })}
+                        className="px-2 py-1.5 rounded-lg bg-neutral-900 border border-neutral-800 text-white text-[11px]"
+                      />
+                      <input
+                        type="text"
+                        placeholder="Color"
+                        value={newEditVariant.color}
+                        onChange={(e) => setNewEditVariant({ ...newEditVariant, color: e.target.value })}
+                        className="px-2 py-1.5 rounded-lg bg-neutral-900 border border-neutral-800 text-white text-[11px]"
+                      />
+                      <input
+                        type="text"
+                        placeholder="Variant SKU"
+                        value={newEditVariant.sku}
+                        onChange={(e) => setNewEditVariant({ ...newEditVariant, sku: e.target.value })}
+                        className="px-2 py-1.5 rounded-lg bg-neutral-900 border border-neutral-800 text-white font-mono text-[11px]"
+                      />
+                      <div className="flex gap-1">
+                        <input
+                          type="number"
+                          min="0"
+                          step="1"
+                          placeholder="Stock"
+                          value={newEditVariant.stock}
+                          onChange={(e) => setNewEditVariant({ ...newEditVariant, stock: e.target.value })}
+                          className="w-full px-2 py-1.5 rounded-lg bg-neutral-900 border border-neutral-800 text-white font-mono text-[11px]"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const cleanSize = newEditVariant.size.trim();
+                            const cleanColor = newEditVariant.color.trim();
+                            const cleanSku = newEditVariant.sku.trim();
+                            const parsedStock = Number(newEditVariant.stock);
+
+                            if (!cleanSize || !cleanColor || !cleanSku) {
+                              setEditVariantError('Size, Color, and Variant SKU are all required.');
+                              return;
+                            }
+                            if (!Number.isInteger(parsedStock) || parsedStock < 0) {
+                              setEditVariantError('Variant stock must be a non-negative integer.');
+                              return;
+                            }
+                            const dup = editingProduct.variants.some(
+                              (v) =>
+                                v.size.trim().toLowerCase() === cleanSize.toLowerCase() &&
+                                v.color.trim().toLowerCase() === cleanColor.toLowerCase()
+                            );
+                            if (dup) {
+                              setEditVariantError(`Variant Size ${cleanSize} (${cleanColor}) already exists.`);
+                              return;
+                            }
+                            const dupSku = editingProduct.variants.some(
+                              (v) => v.sku.trim().toUpperCase() === cleanSku.toUpperCase()
+                            );
+                            if (dupSku) {
+                              setEditVariantError(`Variant SKU "${cleanSku}" already exists.`);
+                              return;
+                            }
+
+                            const updatedVars = [
+                              ...editingProduct.variants,
+                              { size: cleanSize, color: cleanColor, sku: cleanSku, stock: parsedStock },
+                            ];
+                            const updatedSizes = editingProduct.sizes?.some(
+                              (s) => s.trim().toLowerCase() === cleanSize.toLowerCase()
+                            )
+                              ? editingProduct.sizes
+                              : [...(editingProduct.sizes || []), cleanSize];
+                            const updatedColors = editingProduct.colors?.some(
+                              (c) => c.name.trim().toLowerCase() === cleanColor.toLowerCase()
+                            )
+                              ? editingProduct.colors
+                              : [...(editingProduct.colors || []), { name: cleanColor, hex: '#333333' }];
+
+                            setEditingProduct({
+                              ...editingProduct,
+                              variants: updatedVars,
+                              sizes: updatedSizes,
+                              colors: updatedColors,
+                              stock: updatedVars.reduce((acc, item) => acc + Math.max(0, item.stock || 0), 0),
+                            });
+                            setNewEditVariant({ size: '', color: '', sku: '', stock: '0' });
+                            setEditVariantError(null);
+                          }}
+                          className="px-2.5 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-amber-400 font-bold text-[11px] shrink-0"
+                        >
+                          Add
+                        </button>
+                      </div>
+                    </div>
+                    {editVariantError && (
+                      <p className="text-[11px] text-red-400 font-medium">{editVariantError}</p>
+                    )}
                   </div>
                 </div>
               ) : (
@@ -2839,10 +2995,16 @@ export default function AdminDashboardClient({
                   <label className="font-bold text-neutral-300">Stock Units</label>
                   <input
                     type="number"
+                    min="0"
+                    step="1"
                     value={editingProduct.stock}
-                    onChange={(e) =>
-                      setEditingProduct({ ...editingProduct, stock: Number(e.target.value) })
-                    }
+                    onChange={(e) => {
+                      const parsed = Number(e.target.value);
+                      setEditingProduct({
+                        ...editingProduct,
+                        stock: Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : 0,
+                      });
+                    }}
                     className="w-full px-3 py-2 rounded-xl bg-neutral-950 border border-neutral-800 text-white font-mono"
                   />
                 </div>
@@ -2862,15 +3024,22 @@ export default function AdminDashboardClient({
 
                 <button
                   type="button"
-                  onClick={() =>
+                  onClick={() => {
+                    const hasVars =
+                      Array.isArray(editingProduct.variants) && editingProduct.variants.length > 0;
                     handleUpdateProduct(editingProduct._id.toString(), {
                       price: editingProduct.price,
-                      stock: editingProduct.stock,
-                      variants: editingProduct.variants,
+                      ...(hasVars
+                        ? {
+                            variants: editingProduct.variants,
+                            sizes: editingProduct.sizes,
+                            colors: editingProduct.colors,
+                          }
+                        : { stock: editingProduct.stock }),
                       isFeatured: editingProduct.isFeatured,
                       images: editingProduct.images,
-                    })
-                  }
+                    });
+                  }}
                   className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-black uppercase tracking-wider text-xs"
                 >
                   Save Changes

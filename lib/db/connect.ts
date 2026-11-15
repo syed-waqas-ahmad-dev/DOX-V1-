@@ -142,6 +142,47 @@ export function isApprovedMockEnvironment(): boolean {
 }
 
 /**
+ * Determines whether non-auth catalog/order MockDb usage is intentionally permitted.
+ * Strict Fail-Closed Rules:
+ * 1. NEVER permitted if a MongoDB URI / database configuration is present.
+ * 2. NEVER permitted in production (NODE_ENV === 'production' or APP_ENV === 'production').
+ * 3. NEVER permitted in Vercel preview/production deployments.
+ * 4. NEVER permitted in staging environments.
+ * 5. NEVER permitted in non-test CI runs.
+ * 6. Permitted ONLY when no database is configured in local development or test execution.
+ */
+export function canUseMockDatabase(): boolean {
+  if (isDatabaseConfigured()) {
+    return false;
+  }
+
+  const nodeEnv = process.env.NODE_ENV as string | undefined;
+  const appEnv = process.env.APP_ENV;
+  const vercelEnv = process.env.VERCEL_ENV;
+  const isVercel = process.env.VERCEL === '1';
+  const customEnv = process.env.ENVIRONMENT;
+  const isCI = process.env.CI === 'true';
+
+  if (nodeEnv === 'production' || appEnv === 'production') {
+    return false;
+  }
+
+  if (vercelEnv === 'preview' || vercelEnv === 'production' || (isVercel && vercelEnv !== 'development')) {
+    return false;
+  }
+
+  if (nodeEnv === 'staging' || appEnv === 'staging' || customEnv === 'staging') {
+    return false;
+  }
+
+  if (isCI && nodeEnv !== 'test') {
+    return false;
+  }
+
+  return true;
+}
+
+/**
  * Establishes or retrieves the cached singleton MongoDB connection.
  * Configured with enterprise connection pooling, fail-fast buffering, and graceful offline fallback.
  *
@@ -200,7 +241,7 @@ export async function connectToDatabase(): Promise<Mongoose | null> {
         return mongooseInstance;
       })
       .catch((err: Error) => {
-        console.warn('[OX Shoes DB] MongoDB not connected — falling back to mock store:', err.message);
+        console.warn('[OX Shoes DB] MongoDB connection failed:', err.message);
         cached.conn = null;
         cached.promise = null;
         return null;

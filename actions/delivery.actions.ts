@@ -21,11 +21,13 @@ import {
   type IDeliveryPartner,
   type IDeliveryAssignment,
   type IDeliveryLog,
+  type IDeliveryCoordinates,
   type CreateDeliveryPartnerInput,
   type UpdateDeliveryPartnerInput,
   type AssignOrderInput,
   type UpdateAssignmentStatusInput,
 } from '@/types';
+import { resolveCityCoordinates, isValidCoordinatePair } from '@/lib/cities';
 import { successResponse, errorResponse, type ActionResult } from '@/lib/response';
 import { handleActionError } from '@/lib/error-handler';
 import mongoose, { Types } from 'mongoose';
@@ -179,21 +181,48 @@ async function verifyRiderOrAdminAuth(targetPartnerId?: string): Promise<{
   }
 }
 
-const CITY_COORDINATES: Record<string, [number, number]> = {
-  Peshawar: [34.0151, 71.5249],
-  Lahore: [31.5204, 74.3587],
-  Islamabad: [33.6844, 73.0479],
-  Rawalpindi: [33.5651, 73.0169],
-  Karachi: [24.8607, 67.0011],
-  Faisalabad: [31.4504, 73.135],
-  Multan: [30.1575, 71.5249],
-  Sialkot: [32.4945, 74.5229],
-  Gujranwala: [32.1877, 74.1945],
-  Hyderabad: [25.396, 68.3578],
-  Quetta: [30.1798, 66.975],
-  Mardan: [34.1989, 72.0404],
-  Abbottabad: [34.1688, 73.2215],
-};
+function formatAssignmentDeliveryAddress(
+  shipAddr: Record<string, unknown> | undefined,
+  fallbackCity: string
+): {
+  deliveryAddress: string;
+  villageAddress: string;
+  postalCode: string;
+  city: string;
+  deliveryCoordinates?: IDeliveryCoordinates;
+} {
+  const street = typeof shipAddr?.street === 'string' ? shipAddr.street.trim() : '';
+  const address = typeof shipAddr?.address === 'string' ? shipAddr.address.trim() : '';
+  const primaryStreet = street || address;
+  const villageAddress = typeof shipAddr?.villageAddress === 'string' ? shipAddr.villageAddress.trim() : '';
+  const city = (typeof shipAddr?.city === 'string' ? shipAddr.city.trim() : '') || fallbackCity;
+  const postalCode = typeof shipAddr?.postalCode === 'string' ? shipAddr.postalCode.trim() : '';
+
+  const parts: string[] = [];
+  for (const part of [primaryStreet, villageAddress, city, postalCode]) {
+    if (part && !parts.some((p) => p.toLowerCase() === part.toLowerCase())) {
+      parts.push(part);
+    }
+  }
+
+  const rawCoords = shipAddr?.coordinates as { lat?: unknown; lng?: unknown; source?: unknown } | undefined;
+  const deliveryCoordinates =
+    rawCoords && isValidCoordinatePair(rawCoords.lat, rawCoords.lng)
+      ? {
+          lat: rawCoords.lat as number,
+          lng: rawCoords.lng as number,
+          source: 'manual_pin' as const,
+        }
+      : undefined;
+
+  return {
+    deliveryAddress: parts.join(', '),
+    villageAddress,
+    postalCode,
+    city,
+    deliveryCoordinates,
+  };
+}
 
 /**
  * Free Haversine Distance calculation in kilometers
@@ -307,7 +336,7 @@ export async function createDeliveryPartner(
     }
 
     const cleanPhone = normalizePhone(input.phone);
-    const coords = CITY_COORDINATES[input.city] || [34.0151, 71.5249];
+    const coords = resolveCityCoordinates(input.city);
 
     await connectToDatabase();
 
@@ -326,8 +355,12 @@ export async function createDeliveryPartner(
         area: input.area?.trim() || 'City Center',
         city: input.city || 'Peshawar',
         photo: input.photo || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80',
-        currentLat: coords[0] + (Math.random() - 0.5) * 0.05,
-        currentLng: coords[1] + (Math.random() - 0.5) * 0.05,
+        ...(coords
+          ? {
+              currentLat: coords[0] + (Math.random() - 0.5) * 0.05,
+              currentLng: coords[1] + (Math.random() - 0.5) * 0.05,
+            }
+          : {}),
         createdByAdminId: adminAuth.adminId || input.adminId || 'super-admin',
       });
 
@@ -348,9 +381,13 @@ export async function createDeliveryPartner(
       area: input.area?.trim() || 'City Center',
       city: input.city || 'Peshawar',
       photo: input.photo || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80',
-      currentLat: coords[0] + (Math.random() - 0.5) * 0.05,
-      currentLng: coords[1] + (Math.random() - 0.5) * 0.05,
-      lastLocationUpdate: new Date(),
+      ...(coords
+        ? {
+            currentLat: coords[0] + (Math.random() - 0.5) * 0.05,
+            currentLng: coords[1] + (Math.random() - 0.5) * 0.05,
+            lastLocationUpdate: new Date(),
+          }
+        : {}),
       status: DeliveryPartnerStatus.ACTIVE,
       createdByAdminId: adminAuth.adminId || input.adminId || 'super-admin',
     });
@@ -502,7 +539,10 @@ export async function markCodReceivedInOffice(partnerId: string): Promise<Action
    ORDER ASSIGNMENT SYSTEM (ADMIN & DISPATCH ONLY)
    ========================================================================== */
 
-export async function getActiveRidersForCity(city: string): Promise<ActionResult<Array<IDeliveryPartner & { distanceKm?: number }>>> {
+export async function getActiveRidersForCity(
+  city: string,
+  orderCoordinates?: IDeliveryCoordinates | null
+): Promise<ActionResult<Array<IDeliveryPartner & { distanceKm?: number }>>> {
   try {
     const adminAuth = await verifyDeliveryAdminAuth('delivery:dispatch');
     if (!adminAuth.authorized) {
@@ -510,19 +550,39 @@ export async function getActiveRidersForCity(city: string): Promise<ActionResult
     }
 
     await connectToDatabase();
-    const cityCoords = CITY_COORDINATES[city] || [34.0151, 71.5249];
+    const hasOrderCoords = Boolean(
+      orderCoordinates && isValidCoordinatePair(orderCoordinates.lat, orderCoordinates.lng)
+    );
+    const targetCoords: [number, number] | null =
+      hasOrderCoords && orderCoordinates
+        ? [orderCoordinates.lat, orderCoordinates.lng]
+        : resolveCityCoordinates(city);
 
     if (!isDatabaseConnected()) {
       const riders = MockDb.getDeliveryPartners({ city, status: DeliveryPartnerStatus.ACTIVE });
       const enriched = await Promise.all(
         riders.map(async (r) => {
-          const lat = r.currentLat || cityCoords[0];
-          const lng = r.currentLng || cityCoords[1];
-          const distanceKm = await calculateHaversineDistance(cityCoords[0], cityCoords[1], lat, lng);
+          const riderLat = typeof r.currentLat === 'number' ? r.currentLat : null;
+          const riderLng = typeof r.currentLng === 'number' ? r.currentLng : null;
+          const fallbackRiderCoords = resolveCityCoordinates(r.city);
+          const effectiveRiderCoords: [number, number] | null =
+            riderLat !== null && riderLng !== null && isValidCoordinatePair(riderLat, riderLng)
+              ? [riderLat, riderLng]
+              : fallbackRiderCoords;
+
+          const distanceKm =
+            targetCoords && effectiveRiderCoords
+              ? await calculateHaversineDistance(
+                  targetCoords[0],
+                  targetCoords[1],
+                  effectiveRiderCoords[0],
+                  effectiveRiderCoords[1]
+                )
+              : undefined;
           return { ...r, distanceKm };
         })
       );
-      enriched.sort((a, b) => (a.distanceKm || 0) - (b.distanceKm || 0));
+      enriched.sort((a, b) => (a.distanceKm ?? Number.MAX_SAFE_INTEGER) - (b.distanceKm ?? Number.MAX_SAFE_INTEGER));
       return successResponse(enriched, 'Active riders retrieved.');
     }
 
@@ -534,13 +594,27 @@ export async function getActiveRidersForCity(city: string): Promise<ActionResult
 
     const enriched = await Promise.all(
       riders.map(async (r) => {
-        const lat = r.currentLat || cityCoords[0];
-        const lng = r.currentLng || cityCoords[1];
-        const distanceKm = await calculateHaversineDistance(cityCoords[0], cityCoords[1], lat, lng);
+        const riderLat = typeof r.currentLat === 'number' ? r.currentLat : null;
+        const riderLng = typeof r.currentLng === 'number' ? r.currentLng : null;
+        const fallbackRiderCoords = resolveCityCoordinates(r.city);
+        const effectiveRiderCoords: [number, number] | null =
+          riderLat !== null && riderLng !== null && isValidCoordinatePair(riderLat, riderLng)
+            ? [riderLat, riderLng]
+            : fallbackRiderCoords;
+
+        const distanceKm =
+          targetCoords && effectiveRiderCoords
+            ? await calculateHaversineDistance(
+                targetCoords[0],
+                targetCoords[1],
+                effectiveRiderCoords[0],
+                effectiveRiderCoords[1]
+              )
+            : undefined;
         return { ...(r as unknown as IDeliveryPartner), distanceKm };
       })
     );
-    enriched.sort((a, b) => (a.distanceKm || 0) - (b.distanceKm || 0));
+    enriched.sort((a, b) => (a.distanceKm ?? Number.MAX_SAFE_INTEGER) - (b.distanceKm ?? Number.MAX_SAFE_INTEGER));
     return successResponse(enriched, 'Active riders in city retrieved.');
   } catch (error) {
     return handleActionError(error);
@@ -566,7 +640,8 @@ export async function assignOrderToPartner(
       if (!partner) return errorResponse('Delivery partner not found.');
       if ((order.version ?? 0) !== input.expectedVersion) return errorResponse('This was updated by someone else, please refresh');
 
-      const shipAddr = order.shippingAddress as unknown as Record<string, string> | undefined;
+      const shipAddr = order.shippingAddress as unknown as Record<string, unknown> | undefined;
+      const formattedAddr = formatAssignmentDeliveryAddress(shipAddr, partner.city);
       const assignment = MockDb.createDeliveryAssignment({
         orderId: order._id.toString(),
         orderNumber: order.orderNumber,
@@ -576,10 +651,15 @@ export async function assignOrderToPartner(
         status: DeliveryAssignmentStatus.ASSIGNED,
         codAmount: order.paymentStatus === PaymentStatus.PAID ? 0 : order.totalAmount || 0,
         codCollected: false,
-        deliveryAddress: `${shipAddr?.street || shipAddr?.address || ''}, ${shipAddr?.city || partner.city}`,
-        city: shipAddr?.city || partner.city,
-        customerName: shipAddr?.fullName || 'Customer',
-        customerPhone: shipAddr?.phone || '',
+        deliveryAddress: formattedAddr.deliveryAddress,
+        villageAddress: formattedAddr.villageAddress,
+        postalCode: formattedAddr.postalCode,
+        ...(formattedAddr.deliveryCoordinates
+          ? { deliveryCoordinates: formattedAddr.deliveryCoordinates }
+          : {}),
+        city: formattedAddr.city,
+        customerName: (typeof shipAddr?.fullName === 'string' ? shipAddr.fullName : '') || 'Customer',
+        customerPhone: (typeof shipAddr?.phone === 'string' ? shipAddr.phone : '') || '',
         assignedAt: new Date().toISOString(),
         assignedByAdmin: adminAuth.adminName || 'Super Admin',
       });
@@ -603,7 +683,8 @@ export async function assignOrderToPartner(
     if (!partner || partner.isDeleted) return errorResponse('Delivery partner not found.');
     if ((order.version ?? 0) !== input.expectedVersion) return errorResponse('This was updated by someone else, please refresh');
 
-    const shipAddr = order.shippingAddress as unknown as Record<string, string> | undefined;
+    const shipAddr = order.shippingAddress as unknown as Record<string, unknown> | undefined;
+    const formattedAddr = formatAssignmentDeliveryAddress(shipAddr, partner.city);
 
     // Check if assignment already exists
     let assignment = await DeliveryAssignment.findOne({ orderId: order._id });
@@ -612,6 +693,11 @@ export async function assignOrderToPartner(
       assignment.partnerName = partner.name;
       assignment.partnerPhone = partner.phone;
       assignment.status = DeliveryAssignmentStatus.ASSIGNED;
+      assignment.deliveryAddress = formattedAddr.deliveryAddress;
+      assignment.villageAddress = formattedAddr.villageAddress;
+      assignment.postalCode = formattedAddr.postalCode;
+      assignment.deliveryCoordinates = formattedAddr.deliveryCoordinates;
+      assignment.city = formattedAddr.city;
       assignment.assignedAt = new Date();
       assignment.assignedByAdmin = adminAuth.adminName || 'Super Admin';
       await assignment.save();
@@ -625,10 +711,15 @@ export async function assignOrderToPartner(
         status: DeliveryAssignmentStatus.ASSIGNED,
         codAmount: order.paymentStatus === PaymentStatus.PAID ? 0 : order.totalAmount || 0,
         codCollected: false,
-        deliveryAddress: `${shipAddr?.street || ''}, ${shipAddr?.city || partner.city}`,
-        city: shipAddr?.city || partner.city,
-        customerName: shipAddr?.fullName || 'Customer',
-        customerPhone: shipAddr?.phone || '',
+        deliveryAddress: formattedAddr.deliveryAddress,
+        villageAddress: formattedAddr.villageAddress,
+        postalCode: formattedAddr.postalCode,
+        ...(formattedAddr.deliveryCoordinates
+          ? { deliveryCoordinates: formattedAddr.deliveryCoordinates }
+          : {}),
+        city: formattedAddr.city,
+        customerName: (typeof shipAddr?.fullName === 'string' ? shipAddr.fullName : '') || 'Customer',
+        customerPhone: (typeof shipAddr?.phone === 'string' ? shipAddr.phone : '') || '',
         assignedAt: new Date(),
         assignedByAdmin: adminAuth.adminName || 'Super Admin',
       });

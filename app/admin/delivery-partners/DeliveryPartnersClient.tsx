@@ -305,8 +305,9 @@ export default function AdminDeliveryPartnersPage() {
   // Open Assign Modal
   const handleOpenAssignModal = async (order: IOrder) => {
     setAssigningOrder(order);
-    const orderCity = (order.shippingAddress as unknown as Record<string, string> | undefined)?.city || 'Peshawar';
-    const ridersRes = await getActiveRidersForCity(orderCity);
+    const orderCity = order.shippingAddress?.city || '';
+    const orderCoords = order.shippingAddress?.coordinates || null;
+    const ridersRes = await getActiveRidersForCity(orderCity, orderCoords);
     if (ridersRes.success && ridersRes.data) {
       setCandidateRiders(ridersRes.data);
     }
@@ -589,6 +590,7 @@ export default function AdminDeliveryPartnersPage() {
               className="bg-neutral-900 border border-neutral-800 text-neutral-200 text-xs px-3 py-1.5 rounded-xl focus:outline-none focus:border-amber-400"
             >
               <option value="all">All Cities (Pakistan)</option>
+              <option value="Bajaur">Bajaur</option>
               <option value="Peshawar">Peshawar (Hub)</option>
               <option value="Lahore">Lahore</option>
               <option value="Islamabad">Islamabad</option>
@@ -790,8 +792,12 @@ export default function AdminDeliveryPartnersPage() {
                             <span className="font-bold text-white">{formatPKR(ord.totalAmount)}</span>
                           </div>
                           <h4 className="font-bold text-sm text-neutral-200 mt-1">{addr?.fullName || 'Customer'}</h4>
-                          <p className="text-xs text-neutral-400 line-clamp-1">{addr?.street || 'Address'}</p>
-                          <span className="text-[11px] font-bold text-emerald-400 block mt-0.5">{addr?.city || 'Pakistan'}</span>
+                          <p className="text-xs text-neutral-400 line-clamp-1">
+                            {[addr?.street || addr?.address, addr?.villageAddress].filter(Boolean).join(', ') || 'Address'}
+                          </p>
+                          <span className="text-[11px] font-bold text-emerald-400 block mt-0.5">
+                            {[addr?.city || 'Pakistan', addr?.postalCode].filter(Boolean).join(' • ')}
+                          </span>
                         </div>
 
                         <button
@@ -1148,13 +1154,19 @@ export default function AdminDeliveryPartnersPage() {
               <div className="flex justify-between">
                 <span className="text-neutral-500">Destination:</span>
                 <span className="font-bold text-white">
-                  {(assigningOrder.shippingAddress as unknown as Record<string, string> | undefined)?.city || 'Peshawar'}
+                  {assigningOrder.shippingAddress?.city || 'Unspecified'}
                 </span>
               </div>
-              <div className="flex justify-between">
-                <span className="text-neutral-500">Address:</span>
-                <span className="text-neutral-300 line-clamp-1">
-                  {(assigningOrder.shippingAddress as unknown as Record<string, string> | undefined)?.street || 'Street Address'}
+              <div className="flex justify-between gap-4">
+                <span className="text-neutral-500 shrink-0">Address:</span>
+                <span className="text-neutral-300 text-right line-clamp-2">
+                  {[
+                    assigningOrder.shippingAddress?.street || assigningOrder.shippingAddress?.address,
+                    assigningOrder.shippingAddress?.villageAddress,
+                    assigningOrder.shippingAddress?.postalCode,
+                  ]
+                    .filter(Boolean)
+                    .join(', ') || 'Address'}
                 </span>
               </div>
               <div className="flex justify-between">

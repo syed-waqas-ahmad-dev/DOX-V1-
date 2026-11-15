@@ -7,41 +7,24 @@
  * by clicking anywhere on the map. 100% free with zero API keys.
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { MapPin, Navigation, Crosshair, Check } from 'lucide-react';
+import { Navigation, Crosshair, Check, AlertTriangle } from 'lucide-react';
+import { resolveCityCoordinates, isValidCoordinatePair } from '@/lib/cities';
+import type { IDeliveryCoordinates } from '@/types';
 
 interface CheckoutAddressMapProps {
   selectedCity: string;
+  villageAddress?: string;
   streetAddress: string;
-  onLocationConfirmed?: (coords: { lat: number; lng: number }) => void;
+  postalCode?: string;
+  confirmedLocation?: IDeliveryCoordinates | null;
+  onLocationConfirmed?: (coords: IDeliveryCoordinates | null) => void;
 }
 
-// Major Pakistani cities center coordinates [lat, lng]
-const CITY_COORDINATES: Record<string, [number, number]> = {
-  Lahore: [31.5204, 74.3587],
-  Karachi: [24.8607, 67.0011],
-  Islamabad: [33.6844, 73.0479],
-  Rawalpindi: [33.5651, 73.0169],
-  Peshawar: [34.0151, 71.5249],
-  Quetta: [30.1798, 66.975],
-  Multan: [30.1575, 71.5249],
-  Faisalabad: [31.4504, 73.135],
-  Sialkot: [32.4945, 74.5229],
-  Gujranwala: [32.1877, 74.1945],
-  Hyderabad: [25.396, 68.3578],
-  Bahawalpur: [29.3544, 71.6911],
-  Sargodha: [32.0836, 72.6711],
-  Abbottabad: [34.1688, 73.2215],
-  Sukkur: [27.7052, 68.8574],
-  Mardan: [34.1989, 72.0404],
-  Kasur: [31.1179, 74.4461],
-  Sheikhupura: [31.7131, 73.9783],
-  Gujrat: [32.5742, 74.0754],
-  Sahiwal: [30.6682, 73.1114],
-};
+const PAKISTAN_OVERVIEW_CENTER: [number, number] = [30.3753, 69.3451];
 
 const deliveryIcon = L.icon({
   iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
@@ -54,17 +37,21 @@ const deliveryIcon = L.icon({
 });
 
 function MapController({
-  center,
+  centerLat,
+  centerLng,
+  zoom,
   onMapClick,
 }: {
-  center: [number, number];
+  centerLat: number;
+  centerLng: number;
+  zoom: number;
   onMapClick: (latlng: [number, number]) => void;
 }) {
   const map = useMap();
 
   useEffect(() => {
-    map.setView(center, 13);
-  }, [center, map]);
+    map.setView([centerLat, centerLng], zoom);
+  }, [centerLat, centerLng, zoom, map]);
 
   useMapEvents({
     click(e) {
@@ -77,27 +64,62 @@ function MapController({
 
 export default function CheckoutAddressMapInner({
   selectedCity,
+  villageAddress,
   streetAddress,
+  postalCode,
+  confirmedLocation,
   onLocationConfirmed,
 }: CheckoutAddressMapProps) {
   const [prevCity, setPrevCity] = useState(selectedCity);
-  const [customPin, setCustomPin] = useState<[number, number] | null>(null);
+  const [localPin, setLocalPin] = useState<[number, number] | null>(null);
 
   if (prevCity !== selectedCity) {
     setPrevCity(selectedCity);
-    setCustomPin(null);
+    if (localPin !== null) {
+      setLocalPin(null);
+    }
   }
 
-  const cityCoord: [number, number] =
-    CITY_COORDINATES[selectedCity] || CITY_COORDINATES['Lahore'];
-  const pinPosition: [number, number] = customPin || cityCoord;
+  const controlledPin: [number, number] | null =
+    confirmedLocation && isValidCoordinatePair(confirmedLocation.lat, confirmedLocation.lng)
+      ? [confirmedLocation.lat, confirmedLocation.lng]
+      : null;
+
+  const activeManualPin: [number, number] | null =
+    confirmedLocation !== undefined ? controlledPin : localPin;
+
+  const cityCoord = useMemo(
+    () => resolveCityCoordinates(selectedCity),
+    [selectedCity]
+  );
+
+  const isExactManualPin = activeManualPin !== null;
+  const pinPosition: [number, number] | null = activeManualPin || cityCoord;
+
+  // Keep viewport centered on the manual pin if placed, otherwise city centroid or Pakistan overview
+  const mapCenter: [number, number] = pinPosition || PAKISTAN_OVERVIEW_CENTER;
+  const mapZoom = pinPosition ? 13 : 5;
 
   const handleMapClick = (latlng: [number, number]) => {
-    setCustomPin(latlng);
+    setLocalPin(latlng);
     if (onLocationConfirmed) {
-      onLocationConfirmed({ lat: latlng[0], lng: latlng[1] });
+      onLocationConfirmed({
+        lat: latlng[0],
+        lng: latlng[1],
+        source: 'manual_pin',
+      });
     }
   };
+
+  const formattedDestination = [
+    streetAddress?.trim(),
+    villageAddress?.trim(),
+    selectedCity?.trim(),
+    postalCode?.trim(),
+    'Pakistan',
+  ]
+    .filter(Boolean)
+    .join(', ');
 
   return (
     <div className="rounded-2xl border border-neutral-200 overflow-hidden bg-white shadow-sm space-y-3 p-4">
@@ -108,7 +130,9 @@ export default function CheckoutAddressMapInner({
             Delivery Pin Verification (OpenStreetMap)
           </span>
           <h4 className="text-xs font-bold text-neutral-900 mt-0.5">
-            Pinpoint Exact Doorstep Drop-Off in {selectedCity}
+            {selectedCity
+              ? `Pinpoint Delivery Location in ${selectedCity}`
+              : 'Select Your City or Drop Delivery Pin'}
           </h4>
         </div>
         <span className="text-[11px] text-neutral-500 flex items-center gap-1 font-medium bg-neutral-50 px-2.5 py-1 rounded-full border border-neutral-200">
@@ -119,8 +143,8 @@ export default function CheckoutAddressMapInner({
 
       <div className="h-56 sm:h-64 w-full rounded-xl overflow-hidden relative border border-neutral-200 z-0">
         <MapContainer
-          center={cityCoord}
-          zoom={13}
+          center={mapCenter}
+          zoom={mapZoom}
           scrollWheelZoom={false}
           style={{ width: '100%', height: '100%' }}
         >
@@ -129,35 +153,69 @@ export default function CheckoutAddressMapInner({
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           />
 
-          <MapController center={cityCoord} onMapClick={handleMapClick} />
+          <MapController
+            centerLat={mapCenter[0]}
+            centerLng={mapCenter[1]}
+            zoom={mapZoom}
+            onMapClick={handleMapClick}
+          />
 
-          <Marker position={pinPosition} icon={deliveryIcon}>
-            <Popup>
-              <div className="p-1 text-xs font-sans">
-                <strong className="block text-neutral-950 font-bold">Delivery Doorstep</strong>
-                <span className="text-neutral-600">{streetAddress || selectedCity}</span>
-              </div>
-            </Popup>
-          </Marker>
+          {pinPosition && (
+            <Marker position={pinPosition} icon={deliveryIcon}>
+              <Popup>
+                <div className="p-1 text-xs font-sans">
+                  <strong className="block text-neutral-950 font-bold">
+                    {isExactManualPin
+                      ? 'Selected Delivery Pin'
+                      : `Approximate ${selectedCity} Center`}
+                  </strong>
+                  <span className="text-neutral-600">
+                    {formattedDestination || selectedCity}
+                  </span>
+                </div>
+              </Popup>
+            </Marker>
+          )}
         </MapContainer>
 
         {/* Delivery coordinates pill */}
         <div className="absolute top-2 left-2 z-[1000] bg-white/95 backdrop-blur-md px-2.5 py-1 rounded-lg border border-neutral-200 shadow-sm text-[10px] font-mono font-bold text-neutral-700 flex items-center gap-1.5">
-          <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-          GPS: {pinPosition[0].toFixed(4)}, {pinPosition[1].toFixed(4)}
+          <span
+            className={`h-2 w-2 rounded-full ${
+              isExactManualPin
+                ? 'bg-emerald-500 animate-pulse'
+                : pinPosition
+                ? 'bg-amber-500'
+                : 'bg-neutral-400'
+            }`}
+          />
+          {pinPosition
+            ? `${isExactManualPin ? 'Pin' : 'Approx City Center'}: ${pinPosition[0].toFixed(4)}, ${pinPosition[1].toFixed(4)}`
+            : 'Location unresolved — click map to drop pin'}
         </div>
       </div>
 
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1 text-xs">
-        <p className="text-[11px] text-neutral-600 truncate max-w-sm">
+        <p className="text-[11px] text-neutral-600 truncate max-w-sm" title={formattedDestination}>
           <strong className="text-neutral-900">Destination:</strong>{' '}
-          {streetAddress ? `${streetAddress}, ` : ''}
-          {selectedCity}, Pakistan
+          {formattedDestination}
         </p>
-        <div className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-full shrink-0">
-          <Check className="h-3 w-3" />
-          <span>TCS / Leopards Doorstep Dispatch Verified</span>
-        </div>
+        {isExactManualPin ? (
+          <div className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-full shrink-0">
+            <Check className="h-3 w-3" />
+            <span>Exact Delivery Pin Confirmed</span>
+          </div>
+        ) : pinPosition ? (
+          <div className="flex items-center gap-1.5 text-[11px] font-bold text-amber-800 bg-amber-50 border border-amber-200 px-3 py-1 rounded-full shrink-0">
+            <AlertTriangle className="h-3 w-3" />
+            <span>Approximate City Center (Click Map to Pin Exact Location)</span>
+          </div>
+        ) : (
+          <div className="flex items-center gap-1.5 text-[11px] font-bold text-neutral-700 bg-neutral-100 border border-neutral-300 px-3 py-1 rounded-full shrink-0">
+            <AlertTriangle className="h-3 w-3" />
+            <span>City Coordinates Unresolved — Optional Map Pin</span>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -66,8 +66,8 @@ function TrackOrderContent() {
   };
 
 
-  const destCity =
-    (order as any)?.shippingAddress?.city || 'Lahore';
+  const destCity = order?.destinationCity || '';
+  const destCoords = order?.destinationCoordinates || null;
 
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 py-10 w-full flex-1 space-y-8">
@@ -192,9 +192,10 @@ function TrackOrderContent() {
             </div>
           </div>
 
-          {/* Interactive Google Map Shipment Route */}
+          {/* Interactive OpenStreetMap Shipment Route */}
           <OrderTransitMap
             destinationCity={destCity}
+            destinationCoordinates={destCoords}
             orderNumber={order.orderNumber}
             courierName={order.courier || 'TCS Express'}
             trackingNumber={order.trackingNumber}

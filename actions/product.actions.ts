@@ -6,7 +6,7 @@
  * Strict TypeScript: ZERO `any`.
  */
 
-import { connectToDatabase, isDatabaseConnected } from '@/lib/db/connect';
+import { canUseMockDatabase, connectToDatabase, isDatabaseConnected } from '@/lib/db/connect';
 import { Product } from '@/models/Product';
 import { Category } from '@/models/Category';
 import { paginateQuery } from '@/lib/db/pagination';
@@ -32,6 +32,9 @@ export async function getProducts(filters: ProductFilters = {}): Promise<
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable. Please try again later.');
+      }
       return successResponse(MockDb.getProducts(filters));
     }
 
@@ -93,8 +96,7 @@ export async function getProducts(filters: ProductFilters = {}): Promise<
       totalPages: result.totalPages,
     });
   } catch (error: unknown) {
-    // Graceful fallback to MockDb if database query fails
-    return successResponse(MockDb.getProducts(filters));
+    return handleActionError(error);
   }
 }
 
@@ -103,6 +105,9 @@ export async function getProductBySlug(slug: string): Promise<ActionResult<IProd
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable. Please try again later.');
+      }
       const mockProduct = MockDb.getProductBySlug(slug);
       if (!mockProduct) {
         return errorResponse('Product not found or is no longer available.');
@@ -115,15 +120,11 @@ export async function getProductBySlug(slug: string): Promise<ActionResult<IProd
       .lean();
 
     if (!product) {
-      const mockProduct = MockDb.getProductBySlug(slug);
-      if (mockProduct) return successResponse(mockProduct);
       return errorResponse('Product not found or is no longer available.');
     }
 
     return successResponse(JSON.parse(JSON.stringify(product)));
   } catch (error: unknown) {
-    const mockProduct = MockDb.getProductBySlug(slug);
-    if (mockProduct) return successResponse(mockProduct);
     return handleActionError(error);
   }
 }
@@ -133,6 +134,9 @@ export async function getFeaturedProducts(limit = 6): Promise<ActionResult<IProd
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable. Please try again later.');
+      }
       return successResponse(MockDb.getFeaturedProducts(limit));
     }
 
@@ -143,7 +147,7 @@ export async function getFeaturedProducts(limit = 6): Promise<ActionResult<IProd
 
     return successResponse(JSON.parse(JSON.stringify(products)));
   } catch (error: unknown) {
-    return successResponse(MockDb.getFeaturedProducts(limit));
+    return handleActionError(error);
   }
 }
 
@@ -152,6 +156,9 @@ export async function getNewArrivals(limit = 8): Promise<ActionResult<IProduct[]
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable. Please try again later.');
+      }
       return successResponse(MockDb.getNewArrivals(limit));
     }
 
@@ -162,7 +169,7 @@ export async function getNewArrivals(limit = 8): Promise<ActionResult<IProduct[]
 
     return successResponse(JSON.parse(JSON.stringify(products)));
   } catch (error: unknown) {
-    return successResponse(MockDb.getNewArrivals(limit));
+    return handleActionError(error);
   }
 }
 
@@ -177,6 +184,9 @@ export async function searchProducts(queryStr: string): Promise<
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable. Please try again later.');
+      }
       return successResponse(MockDb.searchProducts(queryStr));
     }
 
@@ -202,7 +212,7 @@ export async function searchProducts(queryStr: string): Promise<
 
     return successResponse(formatted);
   } catch (error: unknown) {
-    return successResponse(MockDb.searchProducts(queryStr));
+    return handleActionError(error);
   }
 }
 
@@ -222,6 +232,9 @@ export async function getAllAdminProducts(search?: string): Promise<ActionResult
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable. Please try again later.');
+      }
       const res = MockDb.getProducts({ limit: 100, search });
       return successResponse(res.products);
     }
@@ -235,15 +248,7 @@ export async function getAllAdminProducts(search?: string): Promise<ActionResult
     const products = await Product.find(query).sort({ createdAt: -1 }).limit(100).lean();
     return successResponse(JSON.parse(JSON.stringify(products)));
   } catch (error: unknown) {
-    const auth = await verifyDepartmentAuth({
-      requiredDepartment: Department.INVENTORY,
-      requiredPermission: 'products:read',
-    });
-    if (!auth.authorized) {
-      return errorResponse(auth.error || 'Unauthorized: Inventory clearance required.');
-    }
-    const res = MockDb.getProducts({ limit: 100, search });
-    return successResponse(res.products);
+    return handleActionError(error);
   }
 }
 
@@ -263,18 +268,48 @@ export async function createProduct(payload: Partial<IProduct>): Promise<ActionR
     // Validate variants if provided
     if (payload.variants && payload.variants.length > 0) {
       const seen = new Set<string>();
+      const seenSkus = new Set<string>();
+      const normalizedVariants = [];
       for (const v of payload.variants) {
-        if (typeof v.stock !== 'number' || v.stock < 0) {
-          return errorResponse(`Variant stock for Size ${v.size} cannot be negative.`);
+        const cleanSize = (v.size || '').trim();
+        const cleanColor = (v.color || '').trim();
+        const cleanSku = (v.sku || '').trim();
+        if (!cleanSize || !cleanColor) {
+          return errorResponse('Each variant must specify a valid size and color.');
         }
-        const key = `${v.size.trim().toLowerCase()}_${(v.color || '').trim().toLowerCase()}`;
+        if (!cleanSku) {
+          return errorResponse(`Variant SKU is required for Size ${cleanSize} (${cleanColor}).`);
+        }
+        if (typeof v.stock !== 'number' || !Number.isInteger(v.stock) || v.stock < 0) {
+          return errorResponse(`Variant stock for Size ${cleanSize} (${cleanColor}) must be a non-negative integer.`);
+        }
+        const key = `${cleanSize.toLowerCase()}_${cleanColor.toLowerCase()}`;
         if (seen.has(key)) {
-          return errorResponse(`Duplicate variant detected for Size ${v.size} (${v.color || 'Standard'}).`);
+          return errorResponse(`Duplicate variant detected for Size ${cleanSize} (${cleanColor}).`);
         }
         seen.add(key);
+
+        const skuKey = cleanSku.toUpperCase();
+        if (seenSkus.has(skuKey)) {
+          return errorResponse(`Duplicate variant SKU detected: ${cleanSku}.`);
+        }
+        seenSkus.add(skuKey);
+
+        normalizedVariants.push({
+          ...v,
+          size: cleanSize,
+          color: cleanColor,
+          sku: cleanSku,
+          stock: v.stock,
+        });
       }
+      payload.variants = normalizedVariants;
       // Authoritative aggregate stock calculation
-      payload.stock = payload.variants.reduce((sum, v) => sum + Math.max(0, v.stock || 0), 0);
+      payload.stock = normalizedVariants.reduce((sum, v) => sum + v.stock, 0);
+    } else if (payload.stock !== undefined) {
+      if (typeof payload.stock !== 'number' || !Number.isInteger(payload.stock) || payload.stock < 0) {
+        return errorResponse('Stock must be a non-negative integer.');
+      }
     }
 
     const shortDesc =
@@ -288,6 +323,9 @@ export async function createProduct(payload: Partial<IProduct>): Promise<ActionR
     const finalSku = payload.sku?.trim() ? payload.sku.trim() : `OX-${Math.floor(1000 + Math.random() * 9000)}`;
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable. Cannot create product.');
+      }
       const newProd = MockDb.addProduct({
         ...payload,
         shortDescription: shortDesc,
@@ -316,7 +354,6 @@ export async function createProduct(payload: Partial<IProduct>): Promise<ActionR
     });
 
     const plainDoc = JSON.parse(JSON.stringify(doc.toObject ? doc.toObject() : doc));
-    MockDb.addProduct(plainDoc);
 
     revalidatePath('/shop');
     revalidatePath('/admin');
@@ -324,20 +361,6 @@ export async function createProduct(payload: Partial<IProduct>): Promise<ActionR
 
     return successResponse(plainDoc);
   } catch (error: unknown) {
-    const auth = await verifyDepartmentAuth({
-      requiredDepartment: Department.INVENTORY,
-      requiredPermission: 'products:write',
-    });
-    if (!auth.authorized) {
-      return errorResponse(auth.error || 'Unauthorized: Inventory write clearance required.');
-    }
-    const fallbackProd = MockDb.addProduct(payload);
-    if (fallbackProd) {
-      revalidatePath('/shop');
-      revalidatePath('/admin');
-      revalidatePath('/');
-      return successResponse(fallbackProd);
-    }
     return handleActionError(error);
   }
 }
@@ -358,25 +381,85 @@ export async function updateProduct(
 
     await connectToDatabase();
 
-    // If variants are updated, validate integrity and re-synchronize aggregate stock
-    if (updates.variants && Array.isArray(updates.variants)) {
-      const seen = new Set<string>();
-      for (const v of updates.variants) {
-        if (typeof v.stock !== 'number' || v.stock < 0) {
-          return errorResponse(`Variant stock for Size ${v.size} cannot be negative.`);
-        }
-        const key = `${v.size.trim().toLowerCase()}_${(v.color || '').trim().toLowerCase()}`;
-        if (seen.has(key)) {
-          return errorResponse(`Duplicate variant detected for Size ${v.size} (${v.color || 'Standard'}).`);
-        }
-        seen.add(key);
-      }
-      // Re-synchronize parent stock to equal exact sum of valid variants
-      updates.stock = updates.variants.reduce((sum, v) => sum + Math.max(0, v.stock || 0), 0);
+    const dbConnected = isDatabaseConnected();
+    if (!dbConnected && !canUseMockDatabase()) {
+      return errorResponse('Database connection unavailable. Cannot update product.');
     }
 
-    if (!isDatabaseConnected()) {
-      const updated = MockDb.updateProduct(productId, updates);
+    const existingProduct = dbConnected
+      ? await Product.findById(productId).lean()
+      : MockDb.getProductById(productId);
+
+    if (!existingProduct) {
+      return errorResponse('Product not found.');
+    }
+
+    const sanitizedUpdates: Partial<IProduct> = { ...updates };
+
+    // If variants are updated, validate integrity and re-synchronize aggregate stock
+    if (sanitizedUpdates.variants && Array.isArray(sanitizedUpdates.variants)) {
+      const seen = new Set<string>();
+      const seenSkus = new Set<string>();
+      const normalizedVariants = [];
+
+      for (const v of sanitizedUpdates.variants) {
+        const cleanSize = (v.size || '').trim();
+        const cleanColor = (v.color || '').trim();
+        const cleanSku = (v.sku || '').trim();
+        if (!cleanSize || !cleanColor) {
+          return errorResponse('Each variant must specify a valid size and color.');
+        }
+        if (!cleanSku) {
+          return errorResponse(`Variant SKU is required for Size ${cleanSize} (${cleanColor}).`);
+        }
+        if (typeof v.stock !== 'number' || !Number.isInteger(v.stock) || v.stock < 0) {
+          return errorResponse(`Variant stock for Size ${cleanSize} (${cleanColor}) must be a non-negative integer.`);
+        }
+        const key = `${cleanSize.toLowerCase()}_${cleanColor.toLowerCase()}`;
+        if (seen.has(key)) {
+          return errorResponse(`Duplicate variant detected for Size ${cleanSize} (${cleanColor}).`);
+        }
+        seen.add(key);
+
+        const skuKey = cleanSku.toUpperCase();
+        if (seenSkus.has(skuKey)) {
+          return errorResponse(`Duplicate variant SKU detected: ${cleanSku}.`);
+        }
+        seenSkus.add(skuKey);
+
+        normalizedVariants.push({
+          ...v,
+          size: cleanSize,
+          color: cleanColor,
+          sku: cleanSku,
+          stock: v.stock,
+        });
+      }
+
+      sanitizedUpdates.variants = normalizedVariants;
+      // Re-synchronize parent stock to equal exact sum of valid variants
+      if (normalizedVariants.length > 0) {
+        sanitizedUpdates.stock = normalizedVariants.reduce((sum, v) => sum + v.stock, 0);
+      }
+    } else if (sanitizedUpdates.stock !== undefined) {
+      const hasExistingVariants =
+        Array.isArray(existingProduct.variants) && existingProduct.variants.length > 0;
+      if (hasExistingVariants) {
+        return errorResponse(
+          'Cannot overwrite aggregate stock directly on a variant product. Please update individual size/color variants instead.'
+        );
+      }
+      if (
+        typeof sanitizedUpdates.stock !== 'number' ||
+        !Number.isInteger(sanitizedUpdates.stock) ||
+        sanitizedUpdates.stock < 0
+      ) {
+        return errorResponse('Stock must be a non-negative integer.');
+      }
+    }
+
+    if (!dbConnected) {
+      const updated = MockDb.updateProduct(productId, sanitizedUpdates);
       if (!updated) return errorResponse('Product not found.');
       revalidatePath('/shop');
       revalidatePath('/admin');
@@ -384,19 +467,14 @@ export async function updateProduct(
       return successResponse(updated);
     }
 
-    const doc = await Product.findByIdAndUpdate(productId, { $set: updates }, { new: true }).lean();
+    const doc = await Product.findByIdAndUpdate(
+      productId,
+      { $set: sanitizedUpdates },
+      { new: true }
+    ).lean();
     if (!doc) {
-      const updated = MockDb.updateProduct(productId, updates);
-      if (updated) {
-        revalidatePath('/shop');
-        revalidatePath('/admin');
-        revalidatePath('/');
-        return successResponse(updated);
-      }
       return errorResponse('Product not found.');
     }
-
-    MockDb.updateProduct(productId, updates);
 
     revalidatePath('/shop');
     revalidatePath('/admin');
@@ -404,20 +482,6 @@ export async function updateProduct(
 
     return successResponse(JSON.parse(JSON.stringify(doc)));
   } catch (error: unknown) {
-    const auth = await verifyDepartmentAuth({
-      requiredDepartment: Department.INVENTORY,
-      requiredPermission: 'products:write',
-    });
-    if (!auth.authorized) {
-      return errorResponse(auth.error || 'Unauthorized: Inventory write clearance required.');
-    }
-    const updated = MockDb.updateProduct(productId, updates);
-    if (updated) {
-      revalidatePath('/shop');
-      revalidatePath('/admin');
-      revalidatePath('/');
-      return successResponse(updated);
-    }
     return handleActionError(error);
   }
 }
@@ -502,6 +566,9 @@ export async function deleteProduct(productId: string): Promise<ActionResult<{ d
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable. Cannot delete product.');
+      }
       const ok = MockDb.deleteProduct(productId);
       revalidatePath('/shop');
       revalidatePath('/admin');
@@ -509,8 +576,10 @@ export async function deleteProduct(productId: string): Promise<ActionResult<{ d
       return successResponse({ deleted: ok });
     }
 
-    await Product.findByIdAndDelete(productId);
-    MockDb.deleteProduct(productId);
+    const deletedDoc = await Product.findByIdAndDelete(productId);
+    if (!deletedDoc) {
+      return errorResponse('Product not found.');
+    }
 
     revalidatePath('/shop');
     revalidatePath('/admin');
@@ -518,20 +587,6 @@ export async function deleteProduct(productId: string): Promise<ActionResult<{ d
 
     return successResponse({ deleted: true });
   } catch (error: unknown) {
-    const auth = await verifyDepartmentAuth({
-      requiredDepartment: Department.INVENTORY,
-      requiredPermission: 'products:delete',
-    });
-    if (!auth.authorized) {
-      return errorResponse(auth.error || 'Unauthorized: Inventory delete clearance required.');
-    }
-    const ok = MockDb.deleteProduct(productId);
-    if (ok) {
-      revalidatePath('/shop');
-      revalidatePath('/admin');
-      revalidatePath('/');
-      return successResponse({ deleted: true });
-    }
     return handleActionError(error);
   }
 }

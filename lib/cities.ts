@@ -19,4 +19,53 @@ export const CITY_COORDINATES: Record<string, [number, number]> = {
   Mardan: [34.1989, 72.0404],
   Abbottabad: [34.1688, 73.2215],
   Bajaur: [34.7314, 71.5244],
+  Bahawalpur: [29.3544, 71.6911],
+  Sargodha: [32.0836, 72.6711],
+  Sukkur: [27.7052, 68.8574],
+  Kasur: [31.1179, 74.4461],
+  Sheikhupura: [31.7131, 73.9783],
+  Gujrat: [32.5742, 74.0754],
+  Sahiwal: [30.6682, 73.1114],
 };
+
+const NORMALIZED_CITY_INDEX: Record<string, [number, number]> = Object.fromEntries(
+  Object.entries(CITY_COORDINATES).map(([name, coords]) => [name.trim().toLowerCase(), coords])
+);
+
+/**
+ * Resolves approximate city/district centroid coordinates.
+ * Returns null for unsupported/unresolved cities rather than falling back to Lahore or Peshawar.
+ */
+export function resolveCityCoordinates(city?: string | null): [number, number] | null {
+  if (!city || typeof city !== 'string') return null;
+  const trimmed = city.trim();
+  if (!trimmed) return null;
+
+  if (CITY_COORDINATES[trimmed]) {
+    return CITY_COORDINATES[trimmed];
+  }
+
+  const normalized = trimmed.toLowerCase();
+  if (NORMALIZED_CITY_INDEX[normalized]) {
+    return NORMALIZED_CITY_INDEX[normalized];
+  }
+
+  return null;
+}
+
+/**
+ * Validates finite WGS-84 coordinates.
+ */
+export function isValidCoordinatePair(lat: unknown, lng: unknown): boolean {
+  return (
+    typeof lat === 'number' &&
+    typeof lng === 'number' &&
+    Number.isFinite(lat) &&
+    Number.isFinite(lng) &&
+    lat >= -90 &&
+    lat <= 90 &&
+    lng >= -180 &&
+    lng <= 180
+  );
+}
+

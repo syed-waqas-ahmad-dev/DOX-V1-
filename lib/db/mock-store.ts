@@ -50,7 +50,6 @@ const INITIAL_PRODUCTS: Array<Omit<IProduct, '_id'> & { _id: string }> = [
     sizes: ['40', '41', '42', '43', '44'],
     colors: [
       { name: 'Mustard Brown', hex: '#8B5A2B' },
-      { name: 'Jet Black', hex: '#111111' },
     ],
     variants: [
       { size: '40', color: 'Mustard Brown', stock: 12, sku: 'OX-KAP-001-40-BRN' },
@@ -99,10 +98,9 @@ const INITIAL_PRODUCTS: Array<Omit<IProduct, '_id'> & { _id: string }> = [
     category: ProductCategory.MEN,
     subCategory: ProductSubCategory.PESHAWARI_CHAPPAL,
     brand: ProductBrand.LOCAL,
-    sizes: ['39', '40', '41', '42', '43'],
+    sizes: ['40', '41', '42'],
     colors: [
       { name: 'Jet Black', hex: '#111111' },
-      { name: 'Dark Tan', hex: '#5C3317' },
     ],
     variants: [
       { size: '40', color: 'Jet Black', stock: 15, sku: 'OX-CHA-002-40-BLK' },
@@ -147,10 +145,9 @@ const INITIAL_PRODUCTS: Array<Omit<IProduct, '_id'> & { _id: string }> = [
     category: ProductCategory.WOMEN,
     subCategory: ProductSubCategory.KHUSSA,
     brand: ProductBrand.LOCAL,
-    sizes: ['36', '37', '38', '39', '40'],
+    sizes: ['37', '38'],
     colors: [
       { name: 'Maroon', hex: '#800000' },
-      { name: 'Emerald Green', hex: '#004B23' },
     ],
     variants: [
       { size: '37', color: 'Maroon', stock: 20, sku: 'OX-KHU-004-37-MAR' },
@@ -194,7 +191,7 @@ const INITIAL_PRODUCTS: Array<Omit<IProduct, '_id'> & { _id: string }> = [
     category: ProductCategory.WOMEN,
     subCategory: ProductSubCategory.KHUSSA,
     brand: ProductBrand.LOCAL,
-    sizes: ['36', '37', '38', '39'],
+    sizes: ['37', '38'],
     colors: [{ name: 'Ivory Gold', hex: '#FFFFF0' }],
     variants: [
       { size: '37', color: 'Ivory Gold', stock: 15, sku: 'OX-KHU-005-37-IVO' },
@@ -237,10 +234,9 @@ const INITIAL_PRODUCTS: Array<Omit<IProduct, '_id'> & { _id: string }> = [
     category: ProductCategory.MEN,
     subCategory: ProductSubCategory.FORMAL_SHOES,
     brand: ProductBrand.HUSH_PUPPIES,
-    sizes: ['40', '41', '42', '43', '44'],
+    sizes: ['41', '42'],
     colors: [
       { name: 'Glossy Black', hex: '#0A0A0A' },
-      { name: 'Dark Brown', hex: '#3E2723' },
     ],
     variants: [
       { size: '41', color: 'Glossy Black', stock: 14, sku: 'OX-FOR-006-41-BLK' },
@@ -283,7 +279,7 @@ const INITIAL_PRODUCTS: Array<Omit<IProduct, '_id'> & { _id: string }> = [
     category: ProductCategory.MEN,
     subCategory: ProductSubCategory.JOGGERS,
     brand: ProductBrand.SERVIS,
-    sizes: ['40', '41', '42', '43', '44'],
+    sizes: ['41', '42'],
     colors: [{ name: 'Charcoal Neon', hex: '#333333' }],
     variants: [
       { size: '41', color: 'Charcoal Neon', stock: 18, sku: 'OX-JOG-010-41-NEO' },
@@ -326,7 +322,7 @@ const INITIAL_PRODUCTS: Array<Omit<IProduct, '_id'> & { _id: string }> = [
     category: ProductCategory.MEN,
     subCategory: ProductSubCategory.SNEAKERS,
     brand: ProductBrand.NIKE,
-    sizes: ['40', '41', '42', '43'],
+    sizes: ['41', '42'],
     colors: [{ name: 'Triple White', hex: '#FFFFFF' }],
     variants: [
       { size: '41', color: 'Triple White', stock: 16, sku: 'OX-SNK-012-41-WHT' },
@@ -368,7 +364,7 @@ const INITIAL_PRODUCTS: Array<Omit<IProduct, '_id'> & { _id: string }> = [
     category: ProductCategory.KIDS,
     subCategory: ProductSubCategory.SCHOOL_SHOES,
     brand: ProductBrand.BATA,
-    sizes: ['28', '30', '32', '34'],
+    sizes: ['28', '30'],
     colors: [{ name: 'Classic Black', hex: '#000000' }],
     variants: [
       { size: '28', color: 'Classic Black', stock: 30, sku: 'OX-SCH-018-28-BLK' },
@@ -411,7 +407,7 @@ const INITIAL_PRODUCTS: Array<Omit<IProduct, '_id'> & { _id: string }> = [
     category: ProductCategory.MEN,
     subCategory: ProductSubCategory.PESHAWARI_CHAPPAL,
     brand: ProductBrand.LOCAL,
-    sizes: ['41', '42', '43', '44'],
+    sizes: ['42', '43'],
     colors: [{ name: 'Matte Black Gold', hex: '#1C1C1C' }],
     variants: [
       { size: '42', color: 'Matte Black Gold', stock: 12, sku: 'OX-ROY-021-42-GLD' },
@@ -453,7 +449,7 @@ const INITIAL_PRODUCTS: Array<Omit<IProduct, '_id'> & { _id: string }> = [
     category: ProductCategory.MEN,
     subCategory: ProductSubCategory.PESHAWARI_CHAPPAL,
     brand: ProductBrand.LOCAL,
-    sizes: ['40', '41', '42', '43'],
+    sizes: ['41', '42'],
     colors: [{ name: 'Chocolate Brown', hex: '#3D2314' }],
     variants: [
       { size: '41', color: 'Chocolate Brown', stock: 14, sku: 'OX-NOR-022-41-CHO' },
@@ -495,7 +491,7 @@ const INITIAL_PRODUCTS: Array<Omit<IProduct, '_id'> & { _id: string }> = [
     category: ProductCategory.WOMEN,
     subCategory: ProductSubCategory.HEELS,
     brand: ProductBrand.STYLO,
-    sizes: ['36', '37', '38', '39'],
+    sizes: ['37', '38'],
     colors: [{ name: 'Rose Gold', hex: '#B76E79' }],
     variants: [
       { size: '37', color: 'Rose Gold', stock: 12, sku: 'OX-HEE-014-37-RSG' },
@@ -537,7 +533,7 @@ const INITIAL_PRODUCTS: Array<Omit<IProduct, '_id'> & { _id: string }> = [
     category: ProductCategory.MEN,
     subCategory: ProductSubCategory.FORMAL_SHOES,
     brand: ProductBrand.LOCAL,
-    sizes: ['41', '42', '43', '44'],
+    sizes: ['42', '43'],
     colors: [{ name: 'Burgundy Wine', hex: '#6B1D2F' }],
     variants: [
       { size: '42', color: 'Burgundy Wine', stock: 8, sku: 'OX-FOR-008-42-BUR' },
@@ -1063,7 +1059,7 @@ export const MockDb = {
   },
 
   getProductById(id: string): IProduct | null {
-    const found = mockStore.products.find((p) => p._id === id);
+    const found = mockStore.products.find((p) => p._id === id || p._id?.toString() === id);
     return found ? (found as unknown as IProduct) : null;
   },
 
@@ -1175,9 +1171,55 @@ export const MockDb = {
   ): IOrder | null {
     const idx = mockStore.orders.findIndex((o) => o._id === orderId || o._id?.toString() === orderId);
     if (idx === -1) return null;
+
+    const currentOrder = mockStore.orders[idx] as unknown as IOrder;
+    const isCancelOrReturn =
+      updates.status === OrderStatus.CANCELLED || updates.status === OrderStatus.RETURNED;
+
+    let extraRestockFields: Record<string, unknown> = {};
+    if (isCancelOrReturn && !currentOrder.isRestocked && Array.isArray(currentOrder.orderItems)) {
+      for (const item of currentOrder.orderItems) {
+        const pIdx = mockStore.products.findIndex(
+          (p) => p._id.toString() === item.productId?.toString()
+        );
+        if (pIdx === -1) continue;
+        const prod = mockStore.products[pIdx];
+        if (Array.isArray(prod.variants) && prod.variants.length > 0) {
+          const updatedVariants = prod.variants.map((v) => {
+            const matchBySku = item.sku && v.sku?.trim().toUpperCase() === item.sku.trim().toUpperCase();
+            const matchByAttr =
+              !matchBySku &&
+              item.size &&
+              item.color &&
+              v.size.trim().toLowerCase() === item.size.trim().toLowerCase() &&
+              v.color.trim().toLowerCase() === item.color.trim().toLowerCase();
+            return matchBySku || matchByAttr
+              ? { ...v, stock: Math.max(0, (v.stock || 0) + item.quantity) }
+              : v;
+          });
+          const totalVariantStock = updatedVariants.reduce(
+            (sum, v) => sum + Math.max(0, v.stock || 0),
+            0
+          );
+          mockStore.products[pIdx] = {
+            ...prod,
+            variants: updatedVariants,
+            stock: totalVariantStock,
+          };
+        } else {
+          mockStore.products[pIdx] = {
+            ...prod,
+            stock: Math.max(0, (prod.stock || 0) + item.quantity),
+          };
+        }
+      }
+      extraRestockFields = { isRestocked: true, restockedAt: new Date().toISOString() };
+    }
+
     mockStore.orders[idx] = {
       ...mockStore.orders[idx],
       ...updates,
+      ...extraRestockFields,
       updatedAt: new Date().toISOString(),
     };
     return mockStore.orders[idx] as unknown as IOrder;
@@ -1200,12 +1242,18 @@ export const MockDb = {
       createdAt: typeof o.createdAt === 'string' ? o.createdAt : o.createdAt?.toISOString(),
     }));
 
+    const lowStockProducts = mockStore.products.filter((p) =>
+      Array.isArray(p.variants) && p.variants.length > 0
+        ? p.variants.some((v) => (v.stock || 0) <= 5)
+        : (p.stock || 0) <= 5
+    ).length;
+
     return {
       totalRevenuePKR,
       totalOrders: orders.length,
       pendingOrders,
       totalProducts: mockStore.products.length,
-      lowStockProducts: mockStore.products.filter((p) => p.stock <= 5).length,
+      lowStockProducts,
       totalCustomers: 14,
       recentOrders,
     };

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { connectToDatabase } from '@/lib/db/connect';
+import { canUseMockDatabase, connectToDatabase } from '@/lib/db/connect';
 import { Cart } from '@/models/Cart';
 import { resolveCartIdentity, attachGuestCartCookie } from '@/lib/cart-session';
 
@@ -20,6 +20,12 @@ export async function POST(req: NextRequest) {
 
     const conn = await connectToDatabase();
     if (!conn) {
+      if (!canUseMockDatabase()) {
+        return NextResponse.json(
+          { success: false, error: 'Database connection unavailable.' },
+          { status: 503 }
+        );
+      }
       const res = NextResponse.json({
         success: true,
         message: 'Added to cart (mock mode)',

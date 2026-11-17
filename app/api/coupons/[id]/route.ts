@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { isElevatedAdminRole } from '@/lib/auth-guard';
-import { connectToDatabase, isDatabaseConnected } from '@/lib/db/connect';
+import { canUseMockDatabase, connectToDatabase, isDatabaseConnected } from '@/lib/db/connect';
 import { Coupon } from '@/models/Coupon';
 import { MockDb } from '@/lib/db/mock-store';
 import { revalidatePath } from 'next/cache';
@@ -37,13 +37,21 @@ export async function DELETE(
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return NextResponse.json(
+          { success: false, error: 'Database connection unavailable.' },
+          { status: 503 }
+        );
+      }
       const ok = MockDb.deleteCoupon(id);
       revalidatePath('/admin');
       return NextResponse.json({ success: true, message: 'Coupon deleted successfully', deleted: ok });
     }
 
-    await Coupon.findByIdAndDelete(id);
-    MockDb.deleteCoupon(id);
+    const deleted = await Coupon.findByIdAndDelete(id);
+    if (!deleted) {
+      return NextResponse.json({ success: false, error: 'Coupon not found' }, { status: 404 });
+    }
 
     revalidatePath('/admin');
 
@@ -77,6 +85,12 @@ export async function GET(
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return NextResponse.json(
+          { success: false, error: 'Database connection unavailable.' },
+          { status: 503 }
+        );
+      }
       const coupon = MockDb.getAllCoupons().find((c) => c._id?.toString() === id);
       return NextResponse.json({ success: true, data: coupon });
     }

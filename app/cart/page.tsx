@@ -7,7 +7,7 @@
  * Strict TypeScript: ZERO `any`.
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { useCartStore } from '@/lib/store/cart';
@@ -20,6 +20,7 @@ import { WhatsAppWidget } from '@/components/layout/WhatsAppWidget';
 import { formatPKR } from '@/lib/formatters/currency';
 import { calculateOrderTotals } from '@/lib/pricing';
 import { validateCouponAction } from '@/actions/coupon.actions';
+import { CouponType } from '@/types';
 import {
   ShoppingBag,
   Trash2,
@@ -54,15 +55,47 @@ export default function CartPage() {
   const subtotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const totalWeight = items.reduce((sum, item) => sum + (item.weight || 750) * item.quantity, 0);
 
+  const appliedCouponCode = appliedCoupon?.code;
+
+  useEffect(() => {
+    if (!isHydrated || !appliedCouponCode) return;
+    if (subtotal <= 0) {
+      removeCoupon();
+      return;
+    }
+    let active = true;
+    validateCouponAction(appliedCouponCode, subtotal).then((res) => {
+      if (!active) return;
+      if (res.success) {
+        applyCoupon({
+          code: res.data.code,
+          discountAmount: res.data.discountAmount,
+          value: res.data.value,
+          minOrderAmount: res.data.minOrderAmount,
+          maxDiscountAmount: res.data.maxDiscountAmount,
+          type: res.data.type,
+        });
+      } else {
+        removeCoupon();
+        setCouponSuccess(null);
+        setCouponError(res.error || 'Coupon is no longer eligible for this bag.');
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [isHydrated, appliedCouponCode, subtotal, applyCoupon, removeCoupon]);
+
   const pricing = calculateOrderTotals(
     items.map((i) => ({ price: i.price, quantity: i.quantity })),
     'Lahore',
     totalWeight,
     appliedCoupon
       ? {
-          type: appliedCoupon.type as any,
-          value: appliedCoupon.discountAmount,
-          minOrderAmount: 0,
+          type: appliedCoupon.type as CouponType,
+          value: appliedCoupon.value ?? appliedCoupon.discountAmount,
+          minOrderAmount: appliedCoupon.minOrderAmount || 0,
+          maxDiscountAmount: appliedCoupon.maxDiscountAmount || undefined,
         }
       : null
   );
@@ -82,6 +115,9 @@ export default function CartPage() {
       applyCoupon({
         code: res.data.code,
         discountAmount: res.data.discountAmount,
+        value: res.data.value,
+        minOrderAmount: res.data.minOrderAmount,
+        maxDiscountAmount: res.data.maxDiscountAmount,
         type: res.data.type,
       });
       setCouponSuccess(res.data.message);
@@ -167,7 +203,7 @@ export default function CartPage() {
             <div className="lg:col-span-7 space-y-4">
               {items.map((item, idx) => (
                 <div
-                  key={`${item.productId}-${item.size}-${item.color}-${idx}`}
+                  key={`${item.productId}-${item.variantId || `${item.size}-${item.color}`}-${idx}`}
                   className="p-5 rounded-2xl bg-white border border-neutral-200 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4"
                 >
                   <div className="flex items-center gap-4">
@@ -204,7 +240,7 @@ export default function CartPage() {
                     {/* Stepper */}
                     <div className="flex items-center border border-neutral-300 rounded-full px-2 py-1 bg-white">
                       <button
-                        onClick={() => updateQuantity(item.productId, item.size, item.color, item.quantity - 1)}
+                        onClick={() => updateQuantity(item.productId, item.size, item.color, item.quantity - 1, item.variantId)}
                         className="p-1 hover:text-black text-neutral-500"
                         title="Decrease"
                       >
@@ -212,7 +248,7 @@ export default function CartPage() {
                       </button>
                       <span className="px-3 text-xs font-bold font-mono">{item.quantity}</span>
                       <button
-                        onClick={() => updateQuantity(item.productId, item.size, item.color, item.quantity + 1)}
+                        onClick={() => updateQuantity(item.productId, item.size, item.color, item.quantity + 1, item.variantId)}
                         className="p-1 hover:text-black text-neutral-500"
                         title="Increase"
                       >
@@ -227,7 +263,7 @@ export default function CartPage() {
 
                     {/* Remove */}
                     <button
-                      onClick={() => removeItem(item.productId, item.size, item.color)}
+                      onClick={() => removeItem(item.productId, item.size, item.color, item.variantId)}
                       className="text-neutral-400 hover:text-red-600 transition-colors p-1"
                       title="Remove Item"
                     >

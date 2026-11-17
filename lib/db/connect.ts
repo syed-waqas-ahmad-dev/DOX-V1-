@@ -31,6 +31,18 @@ if (!global.mongooseConnectionCache) {
 }
 
 /**
+ * Strips credentials, connection URIs, and secret query tokens from MongoDB error strings
+ * before logging to server console.
+ */
+export function sanitizeMongoLogMessage(rawMessage: string): string {
+  if (!rawMessage) return 'Unknown database connection error';
+  return rawMessage
+    .replace(/mongodb(?:\+srv)?:\/\/[^\s@]+@[^\s/?]+/gi, 'mongodb://[redacted]')
+    .replace(/mongodb(?:\+srv)?:\/\/[^\s/?]+/gi, 'mongodb://[redacted]')
+    .slice(0, 240);
+}
+
+/**
  * Resolves the appropriate MongoDB URI and database name, handling swapped or placeholder environment variables.
  */
 function resolveMongoConfig(): { uri: string | null; dbName?: string } {
@@ -193,6 +205,12 @@ export async function connectToDatabase(): Promise<Mongoose | null> {
   mongoose.set('bufferCommands', false);
   mongoose.set('strictQuery', true);
 
+  // Sync cache if mongoose already holds an active connection (e.g. established by another module/worker)
+  if (mongoose.connection.readyState === 1) {
+    cached.conn = mongoose;
+    return cached.conn;
+  }
+
   // Return active connection if already established and ready
   if (cached.conn && cached.conn.connection.readyState === 1) {
     return cached.conn;
@@ -210,42 +228,63 @@ export async function connectToDatabase(): Promise<Mongoose | null> {
     const options: mongoose.ConnectOptions = {
       ...(dbName ? { dbName } : {}),
       maxPoolSize: 10,
-      minPoolSize: 2,
+      minPoolSize: 0,
       socketTimeoutMS: 45000,
-      serverSelectionTimeoutMS: 2000, // Fail fast in 2 seconds
+      serverSelectionTimeoutMS: 5000,
       family: 4,
       autoIndex: process.env.NODE_ENV !== 'production',
     };
 
+    let isAttemptingConnect = true;
+
     // Register connection listeners once
     if (mongoose.connection.listenerCount('connected') === 0) {
       mongoose.connection.on('connected', () => {
-        // Connection established successfully
+        cached.conn = mongoose;
       });
 
       mongoose.connection.on('error', (err: Error) => {
-        // Log cleanly without uncaught exception
-        console.warn('[OX Shoes DB] Connection warning:', err.message);
+        console.warn('[OX Shoes DB] Connection warning:', sanitizeMongoLogMessage(err.message));
+        if (mongoose.connection.readyState !== 1 && !isAttemptingConnect) {
+          cached.conn = null;
+          cached.promise = null;
+        }
       });
 
       mongoose.connection.on('disconnected', () => {
-        cached.conn = null;
-        cached.promise = null;
+        if (!isAttemptingConnect) {
+          cached.conn = null;
+          cached.promise = null;
+        }
       });
     }
 
-    cached.promise = mongoose
-      .connect(uri, options)
-      .then((mongooseInstance) => {
-        cached.conn = mongooseInstance;
-        return mongooseInstance;
-      })
-      .catch((err: Error) => {
-        console.warn('[OX Shoes DB] MongoDB connection failed:', err.message);
-        cached.conn = null;
-        cached.promise = null;
-        return null;
-      });
+    const attemptConnect = async (): Promise<Mongoose | null> => {
+      try {
+        const instance = await mongoose.connect(uri, options);
+        cached.conn = instance;
+        return instance;
+      } catch (firstErr: unknown) {
+        const firstMsg = firstErr instanceof Error ? firstErr.message : 'Initial connection error';
+        console.warn('[OX Shoes DB] Initial connect failed, retrying once:', sanitizeMongoLogMessage(firstMsg));
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        try {
+          const retryInstance = await mongoose.connect(uri, options);
+          cached.conn = retryInstance;
+          return retryInstance;
+        } catch (retryErr: unknown) {
+          const retryMsg = retryErr instanceof Error ? retryErr.message : 'Retry connection error';
+          console.warn('[OX Shoes DB] MongoDB connection failed:', sanitizeMongoLogMessage(retryMsg));
+          cached.conn = null;
+          cached.promise = null;
+          return null;
+        }
+      } finally {
+        isAttemptingConnect = false;
+      }
+    };
+
+    cached.promise = attemptConnect();
   }
 
   try {

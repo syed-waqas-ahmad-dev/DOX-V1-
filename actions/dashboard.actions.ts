@@ -6,7 +6,7 @@
  * Strict TypeScript: ZERO `any`.
  */
 
-import { connectToDatabase, isDatabaseConnected } from '@/lib/db/connect';
+import { canUseMockDatabase, connectToDatabase, isDatabaseConnected } from '@/lib/db/connect';
 import { Order } from '@/models/Order';
 import { Product } from '@/models/Product';
 import { User } from '@/models/User';
@@ -79,6 +79,9 @@ export async function getAdminMetrics(): Promise<ActionResult<AdminDashboardMetr
     };
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable. Unable to load admin metrics.');
+      }
       return successResponse(fallbackMock());
     }
 
@@ -96,7 +99,30 @@ export async function getAdminMetrics(): Promise<ActionResult<AdminDashboardMetr
     ]);
 
     if (!orders || orders.length === 0) {
-      return successResponse(fallbackMock());
+      const emptyTrend = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((label) => ({
+        label,
+        amount: 0,
+        count: 0,
+      }));
+      return successResponse({
+        totalRevenuePKR: 0,
+        totalOrders: 0,
+        pendingOrders: 0,
+        totalProducts,
+        lowStockProducts,
+        totalCustomers: totalCustomers || 0,
+        aovPKR: 0,
+        cityDistribution: [],
+        paymentBreakdown: {
+          codCount: 0,
+          prepaidCount: 0,
+          codAmount: 0,
+          prepaidAmount: 0,
+        },
+        statusBreakdown: {},
+        revenueTrend: emptyTrend,
+        recentOrders: [],
+      });
     }
 
     const totalRevenuePKR = orders.reduce((sum, o) => sum + (o.totalAmount || 0), 0);

@@ -197,7 +197,10 @@ export function generateInvoiceData(order: IOrder): InvoiceData {
     financials: {
       subtotalPKR: order.subtotal,
       discountPKR: order.discountAmount || 0,
-      gstPKR: order.taxAmount || Math.round(order.subtotal * GST_RATE),
+      gstPKR:
+        typeof order.taxAmount === 'number'
+          ? order.taxAmount
+          : Math.round(Math.max(0, order.subtotal - (order.discountAmount || 0)) * GST_RATE),
       shippingPKR: order.shippingCharges || 0,
       grandTotalPKR: order.totalAmount,
     },

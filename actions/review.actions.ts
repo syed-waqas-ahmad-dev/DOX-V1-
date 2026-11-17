@@ -6,7 +6,7 @@
  * Strict TypeScript: ZERO `any`.
  */
 
-import { connectToDatabase, isDatabaseConnected } from '@/lib/db/connect';
+import { canUseMockDatabase, connectToDatabase, isDatabaseConnected } from '@/lib/db/connect';
 import { Review } from '@/models/Review';
 import { createReviewSchema, type CreateReviewInput } from '@/lib/validators';
 import { successResponse, errorResponse, type ActionResult } from '@/lib/response';
@@ -41,6 +41,9 @@ export async function createReviewAction(
     const validated = createReviewSchema.parse(input);
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable. Please try again later.');
+      }
       const newRev = MockDb.addReview({
         userId: new Types.ObjectId('660e1234567890abcdef1000'),
         productId: new Types.ObjectId(validated.productId.length === 24 ? validated.productId : undefined),
@@ -89,6 +92,9 @@ export async function getProductReviews(productId: string): Promise<ActionResult
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable. Please try again later.');
+      }
       return successResponse(MockDb.getReviews(productId));
     }
 
@@ -102,7 +108,7 @@ export async function getProductReviews(productId: string): Promise<ActionResult
 
     return successResponse(JSON.parse(JSON.stringify(reviews)));
   } catch (error: unknown) {
-    return successResponse(MockDb.getReviews(productId));
+    return handleActionError(error);
   }
 }
 
@@ -111,6 +117,9 @@ export async function markReviewHelpful(reviewId: string): Promise<ActionResult<
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable. Please try again later.');
+      }
       return successResponse({ helpfulCount: 1 });
     }
 
@@ -121,6 +130,6 @@ export async function markReviewHelpful(reviewId: string): Promise<ActionResult<
     );
     return successResponse({ helpfulCount: updated?.helpfulCount || 0 });
   } catch (error: unknown) {
-    return successResponse({ helpfulCount: 1 });
+    return handleActionError(error);
   }
 }

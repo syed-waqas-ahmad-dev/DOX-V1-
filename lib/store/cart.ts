@@ -69,6 +69,9 @@ interface CartState {
   appliedCoupon: {
     code: string;
     discountAmount: number;
+    value?: number;
+    minOrderAmount?: number;
+    maxDiscountAmount?: number | null;
     type: string;
   } | null;
 
@@ -79,7 +82,14 @@ interface CartState {
   addItem: (item: Omit<CartStoreItem, 'quantity'> & { quantity?: number }) => void;
   removeItem: (productId: string, size: string, color: string, variantId?: string) => void;
   updateQuantity: (productId: string, size: string, color: string, quantity: number, variantId?: string) => void;
-  applyCoupon: (coupon: { code: string; discountAmount: number; type: string }) => void;
+  applyCoupon: (coupon: {
+    code: string;
+    discountAmount: number;
+    value?: number;
+    minOrderAmount?: number;
+    maxDiscountAmount?: number | null;
+    type: string;
+  }) => void;
   removeCoupon: () => void;
   clearCart: () => void;
 

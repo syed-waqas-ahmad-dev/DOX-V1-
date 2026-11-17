@@ -8,8 +8,9 @@
  * Strict TypeScript: ZERO `any`.
  */
 
-import { useState, useEffect, use } from 'react';
+import { useState, useEffect, use, Suspense } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { getOrderById } from '@/actions/order.actions';
 import { generateInvoiceData, type InvoiceData } from '@/lib/invoice';
 import { formatPKR } from '@/lib/formatters/currency';
@@ -34,9 +35,9 @@ interface InvoicePageProps {
   params: Promise<{ id: string }>;
 }
 
-export default function InvoicePage({ params }: InvoicePageProps) {
-  const resolvedParams = use(params);
-  const orderId = resolvedParams.id;
+function InvoiceContent({ orderId }: { orderId: string }) {
+  const searchParams = useSearchParams();
+  const accessToken = searchParams?.get('token') || undefined;
 
   const [order, setOrder] = useState<IOrder | null>(null);
   const [invoice, setInvoice] = useState<InvoiceData | null>(null);
@@ -46,7 +47,7 @@ export default function InvoicePage({ params }: InvoicePageProps) {
   useEffect(() => {
     async function loadData() {
       setLoading(true);
-      const res = await getOrderById(orderId);
+      const res = await getOrderById(orderId, accessToken);
       if (res.success && res.data) {
         setOrder(res.data);
         const invData = generateInvoiceData(res.data);
@@ -55,7 +56,7 @@ export default function InvoicePage({ params }: InvoicePageProps) {
       setLoading(false);
     }
     loadData();
-  }, [orderId]);
+  }, [orderId, accessToken]);
 
   const handlePrint = () => {
     if (typeof window !== 'undefined') {
@@ -108,7 +109,11 @@ export default function InvoicePage({ params }: InvoicePageProps) {
       <div className="max-w-4xl mx-auto mb-6 flex flex-wrap items-center justify-between gap-3 print:hidden">
         <div className="flex items-center gap-3">
           <Link
-            href={`/order-confirmation/${order._id}`}
+            href={
+              accessToken
+                ? `/order-confirmation/${order._id}?token=${encodeURIComponent(accessToken)}`
+                : `/order-confirmation/${order._id}`
+            }
             className="inline-flex items-center gap-1.5 text-xs font-bold text-neutral-600 hover:text-neutral-950 transition-colors bg-white px-3.5 py-2 rounded-xl border border-neutral-300 shadow-sm"
           >
             <ArrowLeft className="h-3.5 w-3.5" />
@@ -350,5 +355,22 @@ export default function InvoicePage({ params }: InvoicePageProps) {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function InvoicePage({ params }: InvoicePageProps) {
+  const resolvedParams = use(params);
+  const orderId = resolvedParams.id;
+
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-neutral-100 flex items-center justify-center text-xs font-bold text-neutral-600">
+          Generating official tax invoice...
+        </div>
+      }
+    >
+      <InvoiceContent orderId={orderId} />
+    </Suspense>
   );
 }

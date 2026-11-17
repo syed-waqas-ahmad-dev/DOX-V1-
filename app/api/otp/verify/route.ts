@@ -6,6 +6,7 @@
 
 import { NextResponse, type NextRequest } from 'next/server';
 import { verifyOtp } from '@/lib/otp-store';
+import { signCodOtpToken } from '@/lib/guest-order-token';
 
 export async function POST(req: NextRequest) {
   try {
@@ -28,9 +29,12 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const codOtpToken = signCodOtpToken(phone.trim());
+
     return NextResponse.json({
       success: true,
       verified: true,
+      codOtpToken,
       message: 'Phone number verified successfully.',
     });
   } catch (error: unknown) {

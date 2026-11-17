@@ -8,7 +8,7 @@
  * Strict TypeScript: ZERO `any`.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { Header } from '@/components/layout/Header';
 import { AnnouncementBar } from '@/components/layout/AnnouncementBar';
@@ -37,21 +37,44 @@ import { useHydrated } from '@/lib/hooks/useHydrated';
 export default function HomePage() {
   const [featuredShoes, setFeaturedShoes] = useState<IProduct[]>([]);
   const [loadingFeatured, setLoadingFeatured] = useState(true);
+  const [featuredError, setFeaturedError] = useState<string | null>(null);
   const [searchModalOpen, setSearchModalOpen] = useState(false);
   const { isUrdu } = useLocale();
   const isHydrated = useHydrated();
 
+  const reloadFeatured = useCallback(async () => {
+    setLoadingFeatured(true);
+    setFeaturedError(null);
+    try {
+      const res = await getFeaturedProducts(8);
+      if (res.success) {
+        setFeaturedShoes(res.data || []);
+      } else {
+        setFeaturedError(res.error || 'Unable to load featured catalog right now.');
+      }
+    } catch {
+      setFeaturedError('Unable to load featured catalog right now.');
+    } finally {
+      setLoadingFeatured(false);
+    }
+  }, []);
+
   useEffect(() => {
     let isMounted = true;
     async function loadFeatured() {
-      setLoadingFeatured(true);
       try {
         const res = await getFeaturedProducts(8);
-        if (isMounted && res?.success && res?.data) {
-          setFeaturedShoes(res.data);
+        if (!isMounted) return;
+        if (res.success) {
+          setFeaturedShoes(res.data || []);
+          setFeaturedError(null);
+        } else {
+          setFeaturedError(res.error || 'Unable to load featured catalog right now.');
         }
-      } catch (err) {
-        console.warn('Unable to load featured products via server action:', err);
+      } catch {
+        if (isMounted) {
+          setFeaturedError('Unable to load featured catalog right now.');
+        }
       } finally {
         if (isMounted) {
           setLoadingFeatured(false);
@@ -110,6 +133,25 @@ export default function HomePage() {
                   <div className="h-4 bg-neutral-200 rounded w-1/2" />
                 </div>
               ))}
+            </div>
+          ) : featuredError ? (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-8 text-center space-y-3">
+              <div className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-amber-100 text-amber-700">
+                <Database className="h-5 w-5" />
+              </div>
+              <h3 className="font-black text-base uppercase tracking-tight text-neutral-950">
+                Catalog Temporarily Unavailable
+              </h3>
+              <p className="text-xs text-neutral-600 max-w-md mx-auto">
+                {featuredError}
+              </p>
+              <button
+                type="button"
+                onClick={reloadFeatured}
+                className="px-6 py-2.5 rounded-full bg-neutral-950 text-white text-xs font-bold uppercase tracking-wider hover:bg-neutral-800 transition-colors"
+              >
+                Retry
+              </button>
             </div>
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-5">

@@ -6,7 +6,7 @@
  * Strict TypeScript: ZERO `any`.
  */
 
-import { connectToDatabase, isDatabaseConnected } from '@/lib/db/connect';
+import { canUseMockDatabase, connectToDatabase, isDatabaseConnected } from '@/lib/db/connect';
 import { Banner } from '@/models/Banner';
 import { successResponse, errorResponse, type ActionResult } from '@/lib/response';
 import { handleActionError } from '@/lib/error-handler';
@@ -26,7 +26,12 @@ import { isElevatedAdminRole, verifyDepartmentAuth } from '@/lib/auth-guard';
 async function verifyBannerAdminAuth(): Promise<boolean> {
   try {
     const auth = await verifyDepartmentAuth({ allowElevatedAdmin: true });
-    return auth.authorized;
+    if (auth.authorized) return true;
+    if (canUseMockDatabase()) {
+      const session = await getServerSession(authOptions).catch(() => null);
+      return isElevatedAdminRole((session?.user as { role?: string } | undefined)?.role);
+    }
+    return false;
   } catch {
     return false;
   }
@@ -67,6 +72,9 @@ export async function getBanners(position?: BannerPosition): Promise<ActionResul
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable: Unable to retrieve banners.');
+      }
       const filtered = position ? DEFAULT_BANNERS.filter((b) => b.position === position) : DEFAULT_BANNERS;
       return successResponse(filtered);
     }
@@ -76,14 +84,20 @@ export async function getBanners(position?: BannerPosition): Promise<ActionResul
 
     const banners = await Banner.find(query).sort({ order: 1 }).lean();
     if (!banners || banners.length === 0) {
-      const filtered = position ? DEFAULT_BANNERS.filter((b) => b.position === position) : DEFAULT_BANNERS;
-      return successResponse(filtered);
+      if (canUseMockDatabase()) {
+        const filtered = position ? DEFAULT_BANNERS.filter((b) => b.position === position) : DEFAULT_BANNERS;
+        return successResponse(filtered);
+      }
+      return successResponse([]);
     }
 
     return successResponse(JSON.parse(JSON.stringify(banners)));
   } catch (error: unknown) {
-    const filtered = position ? DEFAULT_BANNERS.filter((b) => b.position === position) : DEFAULT_BANNERS;
-    return successResponse(filtered);
+    if (canUseMockDatabase()) {
+      const filtered = position ? DEFAULT_BANNERS.filter((b) => b.position === position) : DEFAULT_BANNERS;
+      return successResponse(filtered);
+    }
+    return handleActionError(error);
   }
 }
 
@@ -96,12 +110,18 @@ export async function getAllAdminBanners(): Promise<ActionResult<IBanner[]>> {
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable: Unable to retrieve banners.');
+      }
       return successResponse(MockDb.getAllBanners());
     }
 
     const banners = await Banner.find().sort({ order: 1, createdAt: -1 }).lean();
     if (!banners || banners.length === 0) {
-      return successResponse(MockDb.getAllBanners());
+      if (canUseMockDatabase()) {
+        return successResponse(MockDb.getAllBanners());
+      }
+      return successResponse([]);
     }
 
     return successResponse(JSON.parse(JSON.stringify(banners)));
@@ -109,7 +129,10 @@ export async function getAllAdminBanners(): Promise<ActionResult<IBanner[]>> {
     if (!(await verifyBannerAdminAuth())) {
       return errorResponse('Unauthorized: Administrative clearance required.');
     }
-    return successResponse(MockDb.getAllBanners());
+    if (canUseMockDatabase()) {
+      return successResponse(MockDb.getAllBanners());
+    }
+    return handleActionError(error);
   }
 }
 
@@ -122,6 +145,9 @@ export async function createBanner(payload: Partial<IBanner>): Promise<ActionRes
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable: Unable to create banner.');
+      }
       const created = MockDb.addBanner(payload);
       revalidatePath('/admin');
       revalidatePath('/');
@@ -140,7 +166,9 @@ export async function createBanner(payload: Partial<IBanner>): Promise<ActionRes
       expiresAt: payload.expiresAt || new Date(Date.now() + 60 * 24 * 60 * 60 * 1000),
     });
 
-    MockDb.addBanner(doc);
+    if (canUseMockDatabase()) {
+      MockDb.addBanner(doc);
+    }
     revalidatePath('/admin');
     revalidatePath('/');
     return successResponse(JSON.parse(JSON.stringify(doc)));
@@ -148,11 +176,13 @@ export async function createBanner(payload: Partial<IBanner>): Promise<ActionRes
     if (!(await verifyBannerAdminAuth())) {
       return errorResponse('Unauthorized: Administrative clearance required to create banners.');
     }
-    const created = MockDb.addBanner(payload);
-    if (created) {
-      revalidatePath('/admin');
-      revalidatePath('/');
-      return successResponse(created);
+    if (canUseMockDatabase()) {
+      const created = MockDb.addBanner(payload);
+      if (created) {
+        revalidatePath('/admin');
+        revalidatePath('/');
+        return successResponse(created);
+      }
     }
     return handleActionError(error);
   }
@@ -170,6 +200,9 @@ export async function updateBanner(
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable: Unable to update banner.');
+      }
       const updated = MockDb.updateBanner(bannerId, updates);
       if (!updated) return errorResponse('Banner not found.');
       revalidatePath('/admin');
@@ -179,16 +212,20 @@ export async function updateBanner(
 
     const doc = await Banner.findByIdAndUpdate(bannerId, { $set: updates }, { new: true }).lean();
     if (!doc) {
-      const updated = MockDb.updateBanner(bannerId, updates);
-      if (updated) {
-        revalidatePath('/admin');
-        revalidatePath('/');
-        return successResponse(updated);
+      if (canUseMockDatabase()) {
+        const updated = MockDb.updateBanner(bannerId, updates);
+        if (updated) {
+          revalidatePath('/admin');
+          revalidatePath('/');
+          return successResponse(updated);
+        }
       }
       return errorResponse('Banner not found.');
     }
 
-    MockDb.updateBanner(bannerId, updates);
+    if (canUseMockDatabase()) {
+      MockDb.updateBanner(bannerId, updates);
+    }
     revalidatePath('/admin');
     revalidatePath('/');
     return successResponse(JSON.parse(JSON.stringify(doc)));
@@ -196,11 +233,13 @@ export async function updateBanner(
     if (!(await verifyBannerAdminAuth())) {
       return errorResponse('Unauthorized: Administrative clearance required to update banners.');
     }
-    const updated = MockDb.updateBanner(bannerId, updates);
-    if (updated) {
-      revalidatePath('/admin');
-      revalidatePath('/');
-      return successResponse(updated);
+    if (canUseMockDatabase()) {
+      const updated = MockDb.updateBanner(bannerId, updates);
+      if (updated) {
+        revalidatePath('/admin');
+        revalidatePath('/');
+        return successResponse(updated);
+      }
     }
     return handleActionError(error);
   }
@@ -215,6 +254,9 @@ export async function deleteBanner(bannerId: string): Promise<ActionResult<{ del
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable: Unable to delete banner.');
+      }
       const ok = MockDb.deleteBanner(bannerId);
       revalidatePath('/admin');
       revalidatePath('/');
@@ -222,7 +264,9 @@ export async function deleteBanner(bannerId: string): Promise<ActionResult<{ del
     }
 
     await Banner.findByIdAndDelete(bannerId);
-    MockDb.deleteBanner(bannerId);
+    if (canUseMockDatabase()) {
+      MockDb.deleteBanner(bannerId);
+    }
     revalidatePath('/admin');
     revalidatePath('/');
 
@@ -231,9 +275,12 @@ export async function deleteBanner(bannerId: string): Promise<ActionResult<{ del
     if (!(await verifyBannerAdminAuth())) {
       return errorResponse('Unauthorized: Administrative clearance required to delete banners.');
     }
-    const ok = MockDb.deleteBanner(bannerId);
-    revalidatePath('/admin');
-    revalidatePath('/');
-    return successResponse({ deleted: ok });
+    if (canUseMockDatabase()) {
+      const ok = MockDb.deleteBanner(bannerId);
+      revalidatePath('/admin');
+      revalidatePath('/');
+      return successResponse({ deleted: ok });
+    }
+    return handleActionError(error);
   }
 }

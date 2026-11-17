@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { connectToDatabase } from '@/lib/db/connect';
+import { canUseMockDatabase, connectToDatabase } from '@/lib/db/connect';
 import { Cart } from '@/models/Cart';
 import { Product } from '@/models/Product';
 import { resolveCartIdentity, attachGuestCartCookie } from '@/lib/cart-session';
@@ -10,6 +10,12 @@ async function handleGetCart(req: NextRequest, providedUserId: string | null) {
 
   const conn = await connectToDatabase();
   if (!conn) {
+    if (!canUseMockDatabase()) {
+      return NextResponse.json(
+        { success: false, items: [], error: 'Database connection unavailable.' },
+        { status: 503 }
+      );
+    }
     const res = NextResponse.json({ success: true, items: [] });
     return attachGuestCartCookie(res, newGuestCookieId);
   }

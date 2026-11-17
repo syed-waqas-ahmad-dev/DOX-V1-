@@ -17,6 +17,8 @@ import { useHydrated } from '@/lib/hooks/useHydrated';
 import { formatPKR } from '@/lib/formatters/currency';
 import { FREE_SHIPPING_THRESHOLD } from '@/lib/constants';
 import { validateCouponAction } from '@/actions/coupon.actions';
+import { calculateCouponDiscount } from '@/lib/pricing';
+import { CouponType } from '@/types';
 import {
   X,
   Plus,
@@ -55,7 +57,14 @@ export function CartDrawer() {
   const remainingForFreeShipping = Math.max(0, FREE_SHIPPING_THRESHOLD - subtotal);
   const freeShippingProgress = Math.min(100, (subtotal / FREE_SHIPPING_THRESHOLD) * 100);
 
-  const discountAmount = appliedCoupon ? appliedCoupon.discountAmount : 0;
+  const discountAmount = appliedCoupon
+    ? calculateCouponDiscount(subtotal, {
+        type: appliedCoupon.type as CouponType,
+        value: appliedCoupon.value ?? appliedCoupon.discountAmount,
+        minOrderAmount: appliedCoupon.minOrderAmount || 0,
+        maxDiscountAmount: appliedCoupon.maxDiscountAmount || undefined,
+      })
+    : 0;
   const estimatedTotal = Math.max(0, subtotal - discountAmount);
 
   const handleApplyCoupon = async (e: React.FormEvent) => {
@@ -72,6 +81,9 @@ export function CartDrawer() {
       applyCoupon({
         code: res.data.code,
         discountAmount: res.data.discountAmount,
+        value: res.data.value,
+        minOrderAmount: res.data.minOrderAmount,
+        maxDiscountAmount: res.data.maxDiscountAmount,
         type: res.data.type,
       });
       setCouponCode('');
@@ -163,7 +175,7 @@ export function CartDrawer() {
               </div>
             ) : (
               items.map((item) => (
-                <div key={`${item.productId}-${item.size}-${item.color}`} className="py-4 flex gap-4">
+                <div key={`${item.productId}-${item.variantId || `${item.size}-${item.color}`}`} className="py-4 flex gap-4">
                   <div className="relative h-20 w-20 bg-neutral-100 rounded-lg overflow-hidden shrink-0 border border-neutral-200">
                     {item.image ? (
                       <Image
@@ -186,7 +198,7 @@ export function CartDrawer() {
                           {isUrdu ? item.nameUr || item.name : item.name}
                         </h4>
                         <button
-                          onClick={() => removeItem(item.productId, item.size, item.color)}
+                          onClick={() => removeItem(item.productId, item.size, item.color, item.variantId)}
                           className="text-neutral-400 hover:text-red-600 transition-colors"
                           aria-label="Remove item"
                         >
@@ -206,7 +218,7 @@ export function CartDrawer() {
                       <div className="flex items-center border border-neutral-300 rounded-full overflow-hidden text-xs">
                         <button
                           onClick={() =>
-                            updateQuantity(item.productId, item.size, item.color, item.quantity - 1)
+                            updateQuantity(item.productId, item.size, item.color, item.quantity - 1, item.variantId)
                           }
                           className="p-1.5 hover:bg-neutral-100 text-neutral-600 transition-colors"
                           aria-label="Decrease quantity"
@@ -218,7 +230,7 @@ export function CartDrawer() {
                         </span>
                         <button
                           onClick={() =>
-                            updateQuantity(item.productId, item.size, item.color, item.quantity + 1)
+                            updateQuantity(item.productId, item.size, item.color, item.quantity + 1, item.variantId)
                           }
                           className="p-1.5 hover:bg-neutral-100 text-neutral-600 transition-colors"
                           aria-label="Increase quantity"

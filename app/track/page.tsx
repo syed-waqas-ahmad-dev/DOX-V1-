@@ -57,7 +57,7 @@ function TrackOrderContent() {
 
     const res = await trackOrder(o, v);
     if (res.success) {
-      setOrder(res.data as any);
+      setOrder(res.data);
     } else {
       setErrorMsg(res.error || 'No order found or verification failed.');
       setOrder(null);
@@ -153,7 +153,11 @@ function TrackOrderContent() {
                   Status: {order.status}
                 </span>
                 <Link
-                  href={`/invoice/${order._id}`}
+                  href={
+                    order.guestAccessToken
+                      ? `/invoice/${order._id}?token=${encodeURIComponent(order.guestAccessToken)}`
+                      : `/invoice/${order._id}`
+                  }
                   className="px-3 py-1 rounded-full text-xs font-bold bg-neutral-950 text-white hover:bg-neutral-800 flex items-center gap-1.5 transition-colors shadow-sm"
                 >
                   <FileText className="h-3.5 w-3.5" />

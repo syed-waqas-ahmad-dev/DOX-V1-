@@ -417,6 +417,7 @@ export interface IOrder {
   lastUpdatedBy?: string;
   deliveryOTP?: string;
   verificationToken?: string;
+  idempotencyKey?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -789,6 +790,8 @@ export interface CreateOrderPayload {
     couponCode?: string;
     walletCreditUsed?: number;
     notes?: string;
+    idempotencyKey?: string;
+    codOtpToken?: string;
   };
   userId?: string;
 }
@@ -966,6 +969,7 @@ export interface ITrackOrderDTO {
   trackingNumber?: string;
   destinationCity?: string;
   destinationCoordinates?: IDeliveryCoordinates;
+  guestAccessToken?: string;
   orderItems: Array<{
     name: string;
     size: string;

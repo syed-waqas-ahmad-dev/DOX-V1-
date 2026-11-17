@@ -5,7 +5,7 @@
  */
 
 import { NextResponse, type NextRequest } from 'next/server';
-import { connectToDatabase, isDatabaseConnected } from '@/lib/db/connect';
+import { canUseMockDatabase, connectToDatabase, isDatabaseConnected } from '@/lib/db/connect';
 import { Product } from '@/models/Product';
 import { MockDb } from '@/lib/db/mock-store';
 
@@ -21,6 +21,12 @@ export async function GET(req: NextRequest) {
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return NextResponse.json(
+          { products: [], error: 'Database connection unavailable.' },
+          { status: 503 }
+        );
+      }
       const mockMatches = MockDb.searchProducts(q);
       return NextResponse.json({ products: mockMatches });
     }
@@ -47,8 +53,14 @@ export async function GET(req: NextRequest) {
     }));
 
     return NextResponse.json({ products: formatted });
-  } catch (error: unknown) {
-    const mockMatches = MockDb.searchProducts(q);
-    return NextResponse.json({ products: mockMatches });
+  } catch {
+    if (canUseMockDatabase()) {
+      const mockMatches = MockDb.searchProducts(q);
+      return NextResponse.json({ products: mockMatches });
+    }
+    return NextResponse.json(
+      { products: [], error: 'Search service temporarily unavailable.' },
+      { status: 503 }
+    );
   }
 }

@@ -9,7 +9,7 @@
  * Strict TypeScript: ZERO `any`.
  */
 
-import { connectToDatabase, isDatabaseConnected } from '@/lib/db/connect';
+import { canUseMockDatabase, connectToDatabase, isDatabaseConnected } from '@/lib/db/connect';
 import { User } from '@/models/User';
 import { Referral } from '@/models/Referral';
 import { WalletTransaction } from '@/models/WalletTransaction';
@@ -25,7 +25,7 @@ import { Types } from 'mongoose';
 import { revalidatePath } from 'next/cache';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { isElevatedAdminRole } from '@/lib/auth-guard';
+import { isElevatedAdminRole, verifyDepartmentAuth } from '@/lib/auth-guard';
 import { completeReferralInternal, cancelReferralInternal } from '@/lib/services/referral.service';
 
 const APP_URL =
@@ -122,6 +122,9 @@ export async function trackReferralClick(
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return successResponse({ tracked: false });
+      }
       MockDb.addReferral({
         referrerId: 'user-demo-hamza',
         referredEmail: newUserEmail || 'guest-visitor@oxshoes.pk',
@@ -193,7 +196,9 @@ export async function completeReferral(
       session = null;
     }
 
-    if (!session?.user || !isElevatedAdminRole((session.user as { role?: string }).role)) {
+    const auth = await verifyDepartmentAuth({ allowElevatedAdmin: true });
+    const isOfflineTestSession = canUseMockDatabase() && isElevatedAdminRole((session?.user as { role?: string } | undefined)?.role);
+    if (!auth.authorized && !isOfflineTestSession) {
       return errorResponse('Unauthorized: Administrative clearance required to manually complete referrals.');
     }
 
@@ -283,6 +288,9 @@ export async function getMyReferrals(
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable: Unable to retrieve referrals.');
+      }
       const refs = MockDb.getReferralsByUser(targetUserId);
       const totalEarned = refs
         .filter((r) => r.status === ReferralStatus.APPROVED)
@@ -297,11 +305,14 @@ export async function getMyReferrals(
       .lean();
 
     if (!refs || refs.length === 0) {
-      const mockRefs = MockDb.getReferralsByUser(targetUserId || '');
-      const totalEarned = mockRefs
-        .filter((r) => r.status === ReferralStatus.APPROVED)
-        .reduce((sum, r) => sum + (r.rewardAmount || 200), 0);
-      return successResponse({ referrals: mockRefs as IReferral[], totalEarned });
+      if (canUseMockDatabase()) {
+        const mockRefs = MockDb.getReferralsByUser(targetUserId || '');
+        const totalEarned = mockRefs
+          .filter((r) => r.status === ReferralStatus.APPROVED)
+          .reduce((sum, r) => sum + (r.rewardAmount || 200), 0);
+        return successResponse({ referrals: mockRefs as IReferral[], totalEarned });
+      }
+      return successResponse({ referrals: [], totalEarned: 0 });
     }
 
     const totalEarned = refs
@@ -313,11 +324,14 @@ export async function getMyReferrals(
       totalEarned,
     });
   } catch (error: unknown) {
-    const mockRefs = MockDb.getReferralsByUser(targetUserId || '');
-    const totalEarned = mockRefs
-      .filter((r) => r.status === ReferralStatus.APPROVED)
-      .reduce((sum, r) => sum + (r.rewardAmount || 200), 0);
-    return successResponse({ referrals: mockRefs as IReferral[], totalEarned });
+    if (canUseMockDatabase()) {
+      const mockRefs = MockDb.getReferralsByUser(targetUserId || '');
+      const totalEarned = mockRefs
+        .filter((r) => r.status === ReferralStatus.APPROVED)
+        .reduce((sum, r) => sum + (r.rewardAmount || 200), 0);
+      return successResponse({ referrals: mockRefs as IReferral[], totalEarned });
+    }
+    return handleActionError(error);
   }
 }
 
@@ -436,13 +450,18 @@ export async function getAllReferralsAdmin(): Promise<
       session = null;
     }
 
-    if (!session?.user || !isElevatedAdminRole((session.user as { role?: string }).role)) {
+    const auth = await verifyDepartmentAuth({ allowElevatedAdmin: true });
+    const isOfflineTestSession = canUseMockDatabase() && isElevatedAdminRole((session?.user as { role?: string } | undefined)?.role);
+    if (!auth.authorized && !isOfflineTestSession) {
       return errorResponse('Unauthorized: Administrative clearance required.');
     }
 
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable: Unable to retrieve referrals overview.');
+      }
       const refs = MockDb.getAllReferrals();
       const completed = refs.filter((r) => r.status === ReferralStatus.APPROVED);
       return successResponse({
@@ -487,7 +506,9 @@ export async function approveReferral(referredOrderId: string): Promise<ActionRe
       session = null;
     }
 
-    if (!session?.user || !isElevatedAdminRole((session.user as { role?: string }).role)) {
+    const auth = await verifyDepartmentAuth({ allowElevatedAdmin: true });
+    const isOfflineTestSession = canUseMockDatabase() && isElevatedAdminRole((session?.user as { role?: string } | undefined)?.role);
+    if (!auth.authorized && !isOfflineTestSession) {
       return errorResponse('Unauthorized: Administrative clearance required.');
     }
 
@@ -496,6 +517,12 @@ export async function approveReferral(referredOrderId: string): Promise<ActionRe
     }
 
     await connectToDatabase();
+
+    if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable. Cannot approve referral.');
+      }
+    }
 
     let referral = null;
     const cleanId = referredOrderId.trim();
@@ -560,20 +587,30 @@ export async function cancelReferral(
       session = null;
     }
 
-    if (!session?.user || !isElevatedAdminRole((session.user as { role?: string }).role)) {
+    const auth = await verifyDepartmentAuth({ allowElevatedAdmin: true });
+    const isOfflineTestSession = canUseMockDatabase() && isElevatedAdminRole((session?.user as { role?: string } | undefined)?.role);
+    if (!auth.authorized && !isOfflineTestSession) {
       return errorResponse('Unauthorized: Administrative clearance required to cancel referrals.');
     }
 
     await connectToDatabase();
+
     const cleanId = referredOrderId.trim();
 
     // Check if order exists before attempting cancellation to provide better error feedback
-    let orderDoc = null;
-    if (Types.ObjectId.isValid(cleanId)) {
-      orderDoc = await Order.findById(cleanId).lean();
-    }
-    if (!orderDoc) {
-      orderDoc = await Order.findOne({ orderNumber: cleanId.toUpperCase() }).lean();
+    let orderDoc: unknown = null;
+    if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable. Cannot cancel referral.');
+      }
+      orderDoc = MockDb.getOrderById(cleanId) || MockDb.trackOrder(cleanId);
+    } else {
+      if (Types.ObjectId.isValid(cleanId)) {
+        orderDoc = await Order.findById(cleanId).lean();
+      }
+      if (!orderDoc) {
+        orderDoc = await Order.findOne({ orderNumber: cleanId.toUpperCase() }).lean();
+      }
     }
 
     if (!orderDoc) {

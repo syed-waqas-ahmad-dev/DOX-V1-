@@ -56,7 +56,7 @@ export function validateCouponRules(
   // Category & Brand Restrictions
   if (coupon.applicableCategories && coupon.applicableCategories.length > 0) {
     const hasCategoryMatch = items.some(
-      (item) => item.category && coupon.applicableCategories.includes(item.category as any)
+      (item) => item.category && coupon.applicableCategories.includes(item.category as (typeof coupon.applicableCategories)[number])
     );
     if (!hasCategoryMatch) {
       return {

@@ -16,9 +16,269 @@ import { ProductCategory, ProductSubCategory, Department, type IProduct, type Pr
 import { MockDb } from '@/lib/db/mock-store';
 import { revalidatePath } from 'next/cache';
 import type { Filter } from 'mongodb';
+import { Types } from 'mongoose';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { verifyDepartmentAuth } from '@/lib/auth-guard';
+
+export interface CartValidationItemInput {
+  productId: string;
+  variantId?: string;
+  variantSku?: string;
+  size: string;
+  color: string;
+  quantity: number;
+}
+
+export interface CartValidationItemResult {
+  productId: string;
+  variantId?: string;
+  size: string;
+  color: string;
+  quantity: number;
+  valid: boolean;
+  reason?:
+    | 'product_not_found'
+    | 'variant_not_found'
+    | 'out_of_stock'
+    | 'insufficient_stock'
+    | 'invalid_quantity';
+  message?: string;
+  availableStock?: number;
+  currentPrice?: number;
+  resolvedVariantId?: string;
+  resolvedVariantSku?: string;
+}
+
+const normCartValidateAttr = (val?: string) => (val || '').trim().toLowerCase();
+
+export async function validateCartProducts(
+  items: CartValidationItemInput[]
+): Promise<ActionResult<{ allValid: boolean; results: CartValidationItemResult[] }>> {
+  try {
+    if (!Array.isArray(items) || items.length === 0) {
+      return successResponse({ allValid: true, results: [] });
+    }
+
+    await connectToDatabase();
+
+    const dbConnected = isDatabaseConnected();
+    if (!dbConnected && !canUseMockDatabase()) {
+      return errorResponse('Database connection unavailable. Please try again later.');
+    }
+
+    let productMap = new Map<string, IProduct>();
+    if (dbConnected) {
+      const validObjectIds = Array.from(
+        new Set(items.map((i) => i.productId).filter((id) => Types.ObjectId.isValid(id)))
+      );
+      const products =
+        validObjectIds.length > 0
+          ? await Product.find({
+              _id: { $in: validObjectIds },
+              isActive: true,
+              isDeleted: { $ne: true },
+            }).lean()
+          : [];
+      productMap = new Map(
+        (JSON.parse(JSON.stringify(products)) as IProduct[]).map((p) => [p._id.toString(), p])
+      );
+    }
+
+    const requestedByKey = new Map<string, number>();
+
+    const results: CartValidationItemResult[] = items.map((item) => {
+      if (!Number.isInteger(item.quantity) || item.quantity <= 0) {
+        return {
+          productId: item.productId,
+          variantId: item.variantId,
+          size: item.size,
+          color: item.color,
+          quantity: item.quantity,
+          valid: false,
+          reason: 'invalid_quantity',
+          message: 'Quantity must be a positive whole number.',
+        };
+      }
+
+      const product = dbConnected
+        ? Types.ObjectId.isValid(item.productId)
+          ? productMap.get(item.productId)
+          : undefined
+        : MockDb.getProductById(item.productId);
+
+      if (!product || product.isDeleted || product.isActive === false) {
+        return {
+          productId: item.productId,
+          variantId: item.variantId,
+          size: item.size,
+          color: item.color,
+          quantity: item.quantity,
+          valid: false,
+          reason: 'product_not_found',
+          message: 'This shoe is no longer available in the catalog.',
+        };
+      }
+
+      const variants = Array.isArray(product.variants) ? product.variants : [];
+      if (variants.length === 0) {
+        const availableStock = Math.max(0, product.stock || 0);
+        const dedupKey = `${product._id.toString()}::SIMPLE`;
+        const cumulativeQty = (requestedByKey.get(dedupKey) || 0) + item.quantity;
+
+        if (availableStock === 0) {
+          return {
+            productId: item.productId,
+            variantId: item.variantId,
+            size: item.size,
+            color: item.color,
+            quantity: item.quantity,
+            valid: false,
+            reason: 'out_of_stock',
+            availableStock,
+            currentPrice: product.price,
+            message: `"${product.name}" is currently out of stock.`,
+          };
+        }
+        if (availableStock < cumulativeQty) {
+          return {
+            productId: item.productId,
+            variantId: item.variantId,
+            size: item.size,
+            color: item.color,
+            quantity: item.quantity,
+            valid: false,
+            reason: 'insufficient_stock',
+            availableStock,
+            currentPrice: product.price,
+            message: `Only ${availableStock} unit(s) available for "${product.name}".`,
+          };
+        }
+        requestedByKey.set(dedupKey, cumulativeQty);
+
+        return {
+          productId: item.productId,
+          variantId: item.variantId,
+          size: item.size,
+          color: item.color,
+          quantity: item.quantity,
+          valid: true,
+          availableStock,
+          currentPrice: product.price,
+        };
+      }
+
+      const normSize = normCartValidateAttr(item.size);
+      const normColor = normCartValidateAttr(item.color);
+      let matched = undefined as IProduct['variants'][number] | undefined;
+
+      if (item.variantId && item.variantId.trim()) {
+        const targetId = item.variantId.trim();
+        matched = variants.find((v) => v._id?.toString() === targetId);
+        if (
+          matched &&
+          ((normSize && normCartValidateAttr(matched.size) !== normSize) ||
+            (normColor && normCartValidateAttr(matched.color) !== normColor))
+        ) {
+          matched = undefined;
+        }
+      } else if (item.variantSku && item.variantSku.trim()) {
+        const targetSku = item.variantSku.trim().toUpperCase();
+        matched = variants.find((v) => (v.sku || '').trim().toUpperCase() === targetSku);
+        if (
+          matched &&
+          ((normSize && normCartValidateAttr(matched.size) !== normSize) ||
+            (normColor && normCartValidateAttr(matched.color) !== normColor))
+        ) {
+          matched = undefined;
+        }
+      }
+
+      if (!matched && normSize) {
+        const sizeMatches = variants.filter((v) => normCartValidateAttr(v.size) === normSize);
+        if (normColor) {
+          matched = sizeMatches.find((v) => normCartValidateAttr(v.color) === normColor);
+        } else if (sizeMatches.length === 1) {
+          matched = sizeMatches[0];
+        }
+      }
+
+      if (!matched) {
+        return {
+          productId: item.productId,
+          variantId: item.variantId,
+          size: item.size,
+          color: item.color,
+          quantity: item.quantity,
+          valid: false,
+          reason: 'variant_not_found',
+          currentPrice: product.price,
+          message: `Size ${item.size} (${item.color}) is no longer available for "${product.name}".`,
+        };
+      }
+
+      const dedupKey = `${product._id.toString()}::${matched._id?.toString() || matched.sku}`;
+      const cumulativeQty = (requestedByKey.get(dedupKey) || 0) + item.quantity;
+      const availableStock = Math.max(0, matched.stock || 0);
+
+      if (availableStock === 0) {
+        return {
+          productId: item.productId,
+          variantId: item.variantId,
+          size: item.size,
+          color: item.color,
+          quantity: item.quantity,
+          valid: false,
+          reason: 'out_of_stock',
+          availableStock,
+          currentPrice: product.price,
+          resolvedVariantId: matched._id?.toString(),
+          resolvedVariantSku: matched.sku,
+          message: `Size ${matched.size} (${matched.color}) of "${product.name}" is out of stock.`,
+        };
+      }
+
+      if (availableStock < cumulativeQty) {
+        return {
+          productId: item.productId,
+          variantId: item.variantId,
+          size: item.size,
+          color: item.color,
+          quantity: item.quantity,
+          valid: false,
+          reason: 'insufficient_stock',
+          availableStock,
+          currentPrice: product.price,
+          resolvedVariantId: matched._id?.toString(),
+          resolvedVariantSku: matched.sku,
+          message: `Only ${availableStock} unit(s) available for Size ${matched.size} (${matched.color}).`,
+        };
+      }
+
+      requestedByKey.set(dedupKey, cumulativeQty);
+
+      return {
+        productId: item.productId,
+        variantId: item.variantId,
+        size: item.size,
+        color: item.color,
+        quantity: item.quantity,
+        valid: true,
+        availableStock,
+        currentPrice: product.price,
+        resolvedVariantId: matched._id?.toString(),
+        resolvedVariantSku: matched.sku,
+      };
+    });
+
+    return successResponse({
+      allValid: results.every((r) => r.valid),
+      results,
+    });
+  } catch (error: unknown) {
+    return handleActionError(error);
+  }
+}
 
 export async function getProducts(filters: ProductFilters = {}): Promise<
   ActionResult<{

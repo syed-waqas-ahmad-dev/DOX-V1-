@@ -8,7 +8,7 @@
  * Strict TypeScript: ZERO `any`.
  */
 
-import { connectToDatabase, isDatabaseConnected } from '@/lib/db/connect';
+import { canUseMockDatabase, connectToDatabase, isDatabaseConnected } from '@/lib/db/connect';
 import { User } from '@/models/User';
 import { addressSchema, type AddressInput } from '@/lib/validators';
 import { successResponse, errorResponse, type ActionResult } from '@/lib/response';
@@ -108,6 +108,9 @@ export async function addAddress(userId: string, input: AddressInput): Promise<A
     const validated = addressSchema.parse(input);
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection is currently unavailable.');
+      }
       return successResponse([validated as unknown as IAddress], 'Address added successfully.');
     }
 
@@ -164,6 +167,9 @@ export async function deleteAddress(userId: string, addressId: string): Promise<
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection is currently unavailable.');
+      }
       return successResponse([], 'Address removed.');
     }
 

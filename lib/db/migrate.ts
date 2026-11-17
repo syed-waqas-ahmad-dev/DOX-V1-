@@ -129,6 +129,47 @@ export const migrationRegistry: MigrationStep[] = [
       await TrackingAttempt.createIndexes();
     },
   },
+  {
+    name: '005_create_order_idempotency_index',
+    description: 'Ensure unique sparse index on Order.idempotencyKey with duplicate pre-check',
+    up: async () => {
+      const { Order } = await import('@/models/Order');
+      // 1. Inspect existing indexes (only match single-field idempotencyKey index or exact name)
+      const indexes = await Order.collection.indexes();
+      const existingIdx = indexes.find(
+        (idx) =>
+          idx.name === 'idempotencyKey_1' ||
+          (idx.key && 'idempotencyKey' in idx.key && Object.keys(idx.key).length === 1)
+      );
+      if (existingIdx && existingIdx.unique && existingIdx.sparse) {
+        return;
+      }
+
+      // 2. Pre-check for duplicate non-null idempotencyKey entries
+      const duplicates = await Order.aggregate([
+        { $match: { idempotencyKey: { $exists: true, $ne: null } } },
+        { $group: { _id: '$idempotencyKey', count: { $sum: 1 }, ids: { $push: '$_id' } } },
+        { $match: { count: { $gt: 1 } } },
+      ]);
+
+      if (duplicates.length > 0) {
+        throw new Error(
+          `Cannot create unique idempotencyKey index: found ${duplicates.length} duplicate idempotencyKey groups in existing orders.`
+        );
+      }
+
+      // 3. Drop existing non-sparse or non-unique single-key index if present
+      if (existingIdx && existingIdx.name && (!existingIdx.unique || !existingIdx.sparse)) {
+        await Order.collection.dropIndex(existingIdx.name);
+      }
+
+      // 4. Create unique sparse index
+      await Order.collection.createIndex(
+        { idempotencyKey: 1 },
+        { unique: true, sparse: true, name: 'idempotencyKey_1' }
+      );
+    },
+  },
 ];
 
 /**

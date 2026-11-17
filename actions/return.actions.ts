@@ -6,7 +6,7 @@
  * Strict TypeScript: ZERO `any`.
  */
 
-import { connectToDatabase, isDatabaseConnected } from '@/lib/db/connect';
+import { canUseMockDatabase, connectToDatabase, isDatabaseConnected } from '@/lib/db/connect';
 import { ReturnRequest } from '@/models/ReturnRequest';
 import { Order } from '@/models/Order';
 import { successResponse, errorResponse, type ActionResult } from '@/lib/response';
@@ -66,6 +66,9 @@ export async function createReturnRequest(
     const rmaNumber = `RMA-${new Date().getFullYear()}-${randomCode}`;
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable. Cannot submit return request.');
+      }
       const newReturn: IReturnRequest = {
         _id: new Types.ObjectId(),
         orderId: new Types.ObjectId(),
@@ -148,6 +151,9 @@ export async function getUserReturns(): Promise<ActionResult<IReturnRequest[]>> 
     if (auth.authorized) {
       await connectToDatabase();
       if (!isDatabaseConnected()) {
+        if (!canUseMockDatabase()) {
+          return errorResponse('Database connection unavailable.');
+        }
         return successResponse(mockReturns);
       }
       const returns = await ReturnRequest.find({}).sort({ createdAt: -1 }).lean();
@@ -158,6 +164,9 @@ export async function getUserReturns(): Promise<ActionResult<IReturnRequest[]>> 
     if (auth.role === UserRole.CUSTOMER && auth.userId) {
       await connectToDatabase();
       if (!isDatabaseConnected()) {
+        if (!canUseMockDatabase()) {
+          return errorResponse('Database connection unavailable.');
+        }
         return successResponse(mockReturns.filter(r => r.userId?.toString() === auth.userId));
       }
       const returns = await ReturnRequest.find({ userId: new Types.ObjectId(auth.userId) })

@@ -6,7 +6,7 @@
  * Calling these functions requires the caller to have already performed authorization.
  */
 
-import { connectToDatabase, isDatabaseConnected } from '@/lib/db/connect';
+import { canUseMockDatabase, connectToDatabase, isDatabaseConnected } from '@/lib/db/connect';
 import { User } from '@/models/User';
 import { Referral } from '@/models/Referral';
 import { WalletTransaction } from '@/models/WalletTransaction';
@@ -34,6 +34,9 @@ export async function completeReferralInternal(
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return { success: false, rewardAmount: 0 };
+      }
       const res = MockDb.completeReferral(referredUserId, orderId);
       return {
         success: res.success,
@@ -196,6 +199,9 @@ export async function cancelReferralInternal(
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return { success: false };
+      }
       const mockOrder = MockDb.getOrderById(cleanId);
       if (!mockOrder) {
         return { success: false };
@@ -302,7 +308,7 @@ export async function cancelReferralInternal(
 
       // 4. Finally, transition referral status to CANCELLED (Status-Last)
       referral.status = ReferralStatus.CANCELLED;
-      await (referral as any).save({ session: currentSession || undefined });
+      await referral.save({ session: currentSession || undefined });
 
       return { success: true };
     }, session);

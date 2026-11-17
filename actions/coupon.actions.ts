@@ -9,7 +9,7 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { isElevatedAdminRole, verifyDepartmentAuth } from '@/lib/auth-guard';
-import { connectToDatabase, isDatabaseConnected } from '@/lib/db/connect';
+import { canUseMockDatabase, connectToDatabase, isDatabaseConnected } from '@/lib/db/connect';
 import { Coupon } from '@/models/Coupon';
 import { validateCouponRules } from '@/lib/coupon-validator';
 import { successResponse, errorResponse, type ActionResult } from '@/lib/response';
@@ -21,7 +21,12 @@ import { revalidatePath } from 'next/cache';
 // Helper for coupon management auth with live DB check
 async function checkCouponAdminAuth() {
   const auth = await verifyDepartmentAuth({ allowElevatedAdmin: true });
-  return auth.authorized;
+  if (auth.authorized) return true;
+  if (canUseMockDatabase()) {
+    const session = await getServerSession(authOptions).catch(() => null);
+    return isElevatedAdminRole((session?.user as { role?: string } | undefined)?.role);
+  }
+  return false;
 }
 
 export async function validateCouponAction(
@@ -31,6 +36,9 @@ export async function validateCouponAction(
   ActionResult<{
     code: string;
     discountAmount: number;
+    value: number;
+    minOrderAmount: number;
+    maxDiscountAmount: number | null;
     type: string;
     message: string;
   }>
@@ -43,6 +51,9 @@ export async function validateCouponAction(
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable. Please try again later.');
+      }
       const mockCoupon = MockDb.getCoupon(code);
       if (!mockCoupon) {
         return errorResponse('Invalid coupon code. Please check and try again.');
@@ -54,6 +65,9 @@ export async function validateCouponAction(
       return successResponse({
         code: mockCoupon.code,
         discountAmount: result.discountAmount,
+        value: mockCoupon.value,
+        minOrderAmount: mockCoupon.minOrderAmount || 0,
+        maxDiscountAmount: mockCoupon.maxDiscountAmount ?? null,
         type: mockCoupon.type,
         message: result.message || 'Coupon applied!',
       });
@@ -65,18 +79,6 @@ export async function validateCouponAction(
     }).lean();
 
     if (!coupon) {
-      const mockCoupon = MockDb.getCoupon(code);
-      if (mockCoupon) {
-        const result = validateCouponRules(mockCoupon, subtotal);
-        if (result.valid) {
-          return successResponse({
-            code: mockCoupon.code,
-            discountAmount: result.discountAmount,
-            type: mockCoupon.type,
-            message: result.message || 'Coupon applied!',
-          });
-        }
-      }
       return errorResponse('Invalid coupon code. Please check and try again.');
     }
 
@@ -88,22 +90,13 @@ export async function validateCouponAction(
     return successResponse({
       code: coupon.code,
       discountAmount: result.discountAmount,
+      value: coupon.value,
+      minOrderAmount: coupon.minOrderAmount || 0,
+      maxDiscountAmount: coupon.maxDiscountAmount ?? null,
       type: coupon.type,
       message: result.message || 'Coupon applied!',
     });
   } catch (error: unknown) {
-    const mockCoupon = MockDb.getCoupon(code);
-    if (mockCoupon) {
-      const result = validateCouponRules(mockCoupon, subtotal);
-      if (result.valid) {
-        return successResponse({
-          code: mockCoupon.code,
-          discountAmount: result.discountAmount,
-          type: mockCoupon.type,
-          message: result.message || 'Coupon applied!',
-        });
-      }
-    }
     return handleActionError(error);
   }
 }
@@ -114,14 +107,13 @@ export async function getAllCoupons(): Promise<ActionResult<ICoupon[]>> {
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable.');
+      }
       return successResponse(MockDb.getAllCoupons());
     }
 
     const coupons = await Coupon.find().sort({ createdAt: -1 }).lean();
-    if (!coupons || coupons.length === 0) {
-      return successResponse(MockDb.getAllCoupons());
-    }
-
     return successResponse(JSON.parse(JSON.stringify(coupons)));
   } catch (error: unknown) {
     return handleActionError(error);
@@ -136,6 +128,9 @@ export async function createCoupon(payload: Partial<ICoupon>): Promise<ActionRes
     const normalizedCode = (payload.code || 'COUPON').trim().toUpperCase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable.');
+      }
       const created = MockDb.addCoupon({ ...payload, code: normalizedCode });
       revalidatePath('/admin');
       return successResponse(created);
@@ -147,7 +142,7 @@ export async function createCoupon(payload: Partial<ICoupon>): Promise<ActionRes
       value: Number(payload.value) || 10,
       minOrderAmount: Number(payload.minOrderAmount) || 0,
       maxDiscountAmount: payload.maxDiscountAmount ? Number(payload.maxDiscountAmount) : undefined,
-      usageLimit: Number(payload.usageLimit) || 100,
+      usageLimit: payload.usageLimit !== undefined ? Number(payload.usageLimit) : 100,
       usedCount: 0,
       perUserLimit: 1,
       applicableCategories: [],
@@ -158,15 +153,9 @@ export async function createCoupon(payload: Partial<ICoupon>): Promise<ActionRes
       isActive: payload.isActive !== undefined ? payload.isActive : true,
     });
 
-    MockDb.addCoupon(doc);
     revalidatePath('/admin');
     return successResponse(JSON.parse(JSON.stringify(doc)));
   } catch (error: unknown) {
-    const created = MockDb.addCoupon(payload);
-    if (created) {
-      revalidatePath('/admin');
-      return successResponse(created);
-    }
     return handleActionError(error);
   }
 }
@@ -180,6 +169,9 @@ export async function updateCoupon(
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable.');
+      }
       const updated = MockDb.updateCoupon(couponId, updates);
       if (!updated) return errorResponse('Coupon not found.');
       revalidatePath('/admin');
@@ -188,23 +180,12 @@ export async function updateCoupon(
 
     const doc = await Coupon.findByIdAndUpdate(couponId, { $set: updates }, { new: true }).lean();
     if (!doc) {
-      const updated = MockDb.updateCoupon(couponId, updates);
-      if (updated) {
-        revalidatePath('/admin');
-        return successResponse(updated);
-      }
       return errorResponse('Coupon not found.');
     }
 
-    MockDb.updateCoupon(couponId, updates);
     revalidatePath('/admin');
     return successResponse(JSON.parse(JSON.stringify(doc)));
   } catch (error: unknown) {
-    const updated = MockDb.updateCoupon(couponId, updates);
-    if (updated) {
-      revalidatePath('/admin');
-      return successResponse(updated);
-    }
     return handleActionError(error);
   }
 }
@@ -215,19 +196,22 @@ export async function deleteCoupon(couponId: string): Promise<ActionResult<{ del
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable.');
+      }
       const ok = MockDb.deleteCoupon(couponId);
       revalidatePath('/admin');
       return successResponse({ deleted: ok });
     }
 
-    await Coupon.findByIdAndDelete(couponId);
-    MockDb.deleteCoupon(couponId);
+    const deleted = await Coupon.findByIdAndDelete(couponId);
+    if (!deleted) {
+      return errorResponse('Coupon not found.');
+    }
     revalidatePath('/admin');
 
     return successResponse({ deleted: true });
   } catch (error: unknown) {
-    const ok = MockDb.deleteCoupon(couponId);
-    revalidatePath('/admin');
-    return successResponse({ deleted: ok });
+    return handleActionError(error);
   }
 }

@@ -5,29 +5,35 @@
  */
 
 import { NextResponse } from 'next/server';
-import { getConnectionState, connectToDatabase } from '@/lib/db/connect';
+import {
+  getConnectionState,
+  connectToDatabase,
+  isDatabaseConfigured,
+  sanitizeMongoLogMessage,
+} from '@/lib/db/connect';
 import mongoose from 'mongoose';
 
 export async function GET() {
-  const initialState = getConnectionState();
-
   let canConnect = false;
   let latencyMs = 0;
   let activeCollections: string[] = [];
   let connectionError: string | null = null;
 
-  if (process.env.MONGODB_URI) {
+  if (isDatabaseConfigured()) {
     const start = Date.now();
     try {
-      await connectToDatabase();
+      const conn = await connectToDatabase();
       latencyMs = Date.now() - start;
-      canConnect = true;
-      if (mongoose.connection.db) {
+      canConnect = Boolean(conn && mongoose.connection.readyState === 1);
+      if (canConnect && mongoose.connection.db) {
         const collections = await mongoose.connection.db.listCollections().toArray();
         activeCollections = collections.map((c) => c.name);
+      } else if (!canConnect) {
+        connectionError = 'Database connection unavailable';
       }
     } catch (err: unknown) {
-      connectionError = err instanceof Error ? err.message : 'Unknown database error';
+      connectionError =
+        err instanceof Error ? sanitizeMongoLogMessage(err.message) : 'Database connection unavailable';
     }
   }
 

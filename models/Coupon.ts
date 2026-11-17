@@ -49,7 +49,7 @@ const couponSchema = new Schema<ICoupon, CouponModelType>(
     usageLimit: {
       type: Number,
       default: 1000,
-      min: [1, 'Usage limit must be at least 1'],
+      min: [0, 'Usage limit cannot be negative'],
     },
     usedCount: {
       type: Number,

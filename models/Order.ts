@@ -232,6 +232,12 @@ const orderSchema = new Schema<IOrder, OrderModelType>(
       unique: true,
       sparse: true,
     },
+    idempotencyKey: {
+      type: String,
+      trim: true,
+      unique: true,
+      sparse: true,
+    },
     archived: {
       type: Boolean,
       default: false,
@@ -293,14 +299,15 @@ orderSchema.pre('save', function () {
   }
 
   // Calculate 17% Pakistani GST on taxable subtotal if not preset
-  if (this.taxAmount === 0 && this.subtotal > 0) {
-    this.taxAmount = Math.round(this.subtotal * 0.17);
+  if (typeof this.taxAmount !== 'number') {
+    const taxableSubtotal = Math.max(0, this.subtotal - (this.discountAmount || 0));
+    this.taxAmount = Math.round(taxableSubtotal * 0.17);
   }
 
   // Auto-calculate final total amount
   this.totalAmount = Math.max(
     0,
-    this.subtotal - this.discountAmount + this.taxAmount + this.shippingCharges
+    this.subtotal - (this.discountAmount || 0) + (this.taxAmount || 0) + (this.shippingCharges || 0)
   );
 });
 

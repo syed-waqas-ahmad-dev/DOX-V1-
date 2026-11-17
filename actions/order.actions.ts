@@ -34,6 +34,7 @@ import { headers } from 'next/headers';
 import type { ITrackOrderDTO } from '@/types';
 import { generateVerificationToken, getInvoiceVerificationToken } from '@/lib/invoice';
 import { rateLimit } from '@/lib/rate-limit';
+import { signGuestOrderToken, verifyGuestOrderToken, consumeCodOtpToken, releaseCodOtpToken } from '@/lib/guest-order-token';
 
 interface VariantCandidate {
   _id?: Types.ObjectId | string;
@@ -253,12 +254,102 @@ function resolveOrderProductVariant(
   };
 }
 
-export async function createOrder(payload: CreateOrderPayload): Promise<ActionResult<{ order: IOrder; requiresOtp: boolean }>> {
+function isIdempotencyDuplicateKeyError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const candidate = err as {
+    code?: number;
+    message?: string;
+    keyPattern?: Record<string, unknown>;
+    keyValue?: Record<string, unknown>;
+  };
+
+  const isDuplicateCode =
+    candidate.code === 11000 ||
+    (typeof candidate.message === 'string' && candidate.message.includes('E11000'));
+
+  if (!isDuplicateCode && !(typeof candidate.message === 'string' && candidate.message.includes('idempotencyKey'))) {
+    return false;
+  }
+
+  // 1. Check Mongoose/Mongo keyPattern
+  if (candidate.keyPattern && 'idempotencyKey' in candidate.keyPattern) {
+    return true;
+  }
+
+  // 2. Check keyValue
+  if (candidate.keyValue && 'idempotencyKey' in candidate.keyValue) {
+    return true;
+  }
+
+  // 3. Check error message string for index name or field
+  if (
+    typeof candidate.message === 'string' &&
+    (candidate.message.includes('idempotencyKey') || candidate.message.includes('idempotencyKey_1'))
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function verifyIdempotencyOrderOwnership(
+  existingOrder: {
+    userId?: Types.ObjectId | string | null;
+    guestEmail?: string;
+    guestPhone?: string;
+    shippingAddress?: { phone?: string };
+  },
+  caller: {
+    authoritativeUserId: string | null;
+    guestEmail?: string;
+    guestPhone?: string;
+    shippingPhone?: string;
+  }
+): boolean {
+  const existingUserId = existingOrder.userId?.toString() || null;
+  if (caller.authoritativeUserId) {
+    return existingUserId === caller.authoritativeUserId;
+  }
+  if (existingUserId && existingUserId !== 'guest') {
+    return false;
+  }
+  const normEmail = (v?: string) => (v || '').trim().toLowerCase();
+  const normPhone = (v?: string) => (v || '').trim();
+  const callerEmail = normEmail(caller.guestEmail);
+  const existingEmail = normEmail(existingOrder.guestEmail);
+  if (callerEmail && existingEmail && callerEmail === existingEmail) {
+    return true;
+  }
+  const callerPhone = normPhone(caller.guestPhone) || normPhone(caller.shippingPhone);
+  const existingPhone =
+    normPhone(existingOrder.guestPhone) || normPhone(existingOrder.shippingAddress?.phone);
+  return Boolean(callerPhone && existingPhone && callerPhone === existingPhone);
+}
+
+export async function createOrder(
+  payload: CreateOrderPayload
+): Promise<ActionResult<{ order: IOrder; requiresOtp: boolean; guestAccessToken?: string }>> {
+  let cleanIdempotencyKey: string | undefined;
+  let authoritativeUserId: string | null = null;
+  let validatedGuestEmail: string | undefined;
+  let validatedGuestPhone: string | undefined;
+  let validatedShippingPhone: string | undefined;
+  let consumedOtpJti: string | undefined;
+
   try {
     await connectToDatabase();
 
     // 1. Validate Form Input
     const validatedData = checkoutOrderSchema.parse(payload.checkoutData);
+    if (validatedData.paymentMethod !== PaymentMethod.COD) {
+      return errorResponse('Only Cash on Delivery (COD) is supported.');
+    }
+
+    cleanIdempotencyKey = validatedData.idempotencyKey?.trim() || undefined;
+    validatedGuestEmail = validatedData.guestEmail?.trim() || undefined;
+    validatedGuestPhone = validatedData.guestPhone?.trim() || validatedData.shippingAddress.phone?.trim() || undefined;
+    validatedShippingPhone = validatedData.shippingAddress.phone;
+
     const rawCoords = validatedData.shippingAddress.coordinates;
     if (rawCoords && !isValidCoordinatePair(rawCoords.lat, rawCoords.lng)) {
       return errorResponse('Invalid delivery coordinates provided.');
@@ -285,11 +376,57 @@ export async function createOrder(payload: CreateOrderPayload): Promise<ActionRe
       }
     }
 
+    // Derive Authoritative User Identity from Session early (for both MockDb and live DB)
+    let session = null;
+    try {
+      session = await getServerSession(authOptions);
+    } catch {
+      session = null;
+    }
+
+    const sessionUser = session?.user as { id?: string; email?: string; role?: string } | undefined;
+    if (sessionUser?.id) {
+      if (payload.userId && payload.userId !== sessionUser.id) {
+        return errorResponse('Unauthorized: Session user mismatch.');
+      }
+      authoritativeUserId = sessionUser.id;
+    }
+
     if (!isDatabaseConnected()) {
       if (!canUseMockDatabase()) {
         return errorResponse('Database connection unavailable. Unable to place order right now.');
       }
+
+      if (cleanIdempotencyKey) {
+        const existingMockOrder = MockDb.getAllOrders().find(
+          (o) => o.idempotencyKey === cleanIdempotencyKey
+        );
+        if (existingMockOrder) {
+          const isOwner = verifyIdempotencyOrderOwnership(existingMockOrder, {
+            authoritativeUserId,
+            guestEmail: validatedGuestEmail,
+            guestPhone: validatedGuestPhone,
+            shippingPhone: validatedShippingPhone,
+          });
+          if (!isOwner) {
+            return errorResponse('Unauthorized: Duplicate idempotency key belongs to another customer.');
+          }
+          const isGuestOrder = !existingMockOrder.userId || existingMockOrder.userId.toString() === 'guest';
+          const guestAccessToken = isGuestOrder
+            ? signGuestOrderToken(existingMockOrder._id.toString(), existingMockOrder.orderNumber)
+            : undefined;
+          return successResponse({
+            order: existingMockOrder,
+            requiresOtp:
+              existingMockOrder.paymentMethod === PaymentMethod.COD &&
+              existingMockOrder.totalAmount > COD_MAX_LIMIT_WITHOUT_OTP,
+            ...(guestAccessToken ? { guestAccessToken } : {}),
+          });
+        }
+      }
+
       const orderItems: IOrderItem[] = [];
+      const mockProducts: Array<NonNullable<ReturnType<typeof MockDb.getProductById>>> = [];
       const mockDeductions: Array<{
         productId: string;
         size: string;
@@ -335,6 +472,7 @@ export async function createOrder(payload: CreateOrderPayload): Promise<ActionRe
         }
 
         requestedByMockVariant.set(dedupKey, nextRequested);
+        mockProducts.push(product);
         mockDeductions.push({
           productId: product._id.toString(),
           size: resolved.size,
@@ -358,7 +496,39 @@ export async function createOrder(payload: CreateOrderPayload): Promise<ActionRe
         });
       }
 
-      // Deduct MockDb stock before creating order
+      // Validate coupon BEFORE deducting MockDb stock
+      let appliedCouponDoc = null;
+      if (validatedData.couponCode && validatedData.couponCode.trim()) {
+        const mockCoupon = MockDb.getCoupon(validatedData.couponCode);
+        if (!mockCoupon) {
+          return errorResponse('Invalid or expired promotional coupon code.');
+        }
+        const preSubtotal = orderItems.reduce((acc, curr) => acc + curr.price * curr.quantity, 0);
+        const couponCheck = validateCouponRules(mockCoupon, preSubtotal, mockProducts, true);
+        if (!couponCheck.valid) {
+          return errorResponse(couponCheck.message || 'Promotional coupon is not eligible for this order.');
+        }
+        appliedCouponDoc = mockCoupon;
+      }
+
+      const pricing = calculateOrderTotals(
+        orderItems.map((i) => ({ price: i.price, quantity: i.quantity })),
+        validatedData.shippingAddress.city,
+        totalWeight,
+        appliedCouponDoc
+      );
+
+      const requiresOtp = pricing.totalAmount > COD_MAX_LIMIT_WITHOUT_OTP;
+      if (requiresOtp) {
+        const phoneToVerify = validatedData.shippingAddress.phone || validatedData.guestPhone || '';
+        const otpConsume = consumeCodOtpToken(validatedData.codOtpToken, phoneToVerify);
+        if (!otpConsume.valid) {
+          return errorResponse('Phone verification required for Cash on Delivery orders over PKR 10,000.');
+        }
+        consumedOtpJti = otpConsume.jti;
+      }
+
+      // Deduct MockDb stock after OTP and coupon validation succeed
       for (const ded of mockDeductions) {
         const current = MockDb.getProductById(ded.productId);
         if (!current) continue;
@@ -383,21 +553,6 @@ export async function createOrder(payload: CreateOrderPayload): Promise<ActionRe
         }
       }
 
-      let appliedCouponDoc = null;
-      if (validatedData.couponCode) {
-        appliedCouponDoc = MockDb.getCoupon(validatedData.couponCode);
-      }
-
-      const pricing = calculateOrderTotals(
-        orderItems.map((i) => ({ price: i.price, quantity: i.quantity })),
-        validatedData.shippingAddress.city,
-        totalWeight,
-        appliedCouponDoc
-      );
-
-      const isCOD = validatedData.paymentMethod === 'COD';
-      const requiresOtp = isCOD && pricing.totalAmount > COD_MAX_LIMIT_WITHOUT_OTP;
-
       const currentYear = new Date().getFullYear();
       const randomHex = Math.floor(1000 + Math.random() * 9000);
       const orderNumber = `OX-${currentYear}-${randomHex}`;
@@ -408,9 +563,9 @@ export async function createOrder(payload: CreateOrderPayload): Promise<ActionRe
 
       const newOrder = MockDb.createOrder({
         orderNumber,
-        userId: payload.userId || 'guest',
+        userId: authoritativeUserId || payload.userId || 'guest',
         guestEmail: validatedData.guestEmail || '',
-        guestPhone: validatedData.guestPhone || '',
+        guestPhone: validatedGuestPhone || '',
         orderItems,
         subtotal: pricing.subtotal,
         discountAmount: pricing.discountAmount,
@@ -429,22 +584,61 @@ export async function createOrder(payload: CreateOrderPayload): Promise<ActionRe
           ...(sanitizedCoordinates ? { coordinates: sanitizedCoordinates } : {}),
         },
         status: OrderStatus.CONFIRMED,
-        paymentMethod: validatedData.paymentMethod as PaymentMethod,
-        paymentStatus: isCOD ? PaymentStatus.PENDING : PaymentStatus.PAID,
+        paymentMethod: PaymentMethod.COD,
+        paymentStatus: PaymentStatus.PENDING,
         courier,
         trackingNumber,
         notes: validatedData.notes,
         verificationToken: generateVerificationToken(),
+        ...(cleanIdempotencyKey ? { idempotencyKey: cleanIdempotencyKey } : {}),
       });
+
+      const isGuestOrder = !newOrder.userId || newOrder.userId.toString() === 'guest';
+      const guestAccessToken = isGuestOrder
+        ? signGuestOrderToken(newOrder._id.toString(), newOrder.orderNumber)
+        : undefined;
 
       return successResponse({
         order: newOrder,
         requiresOtp,
+        ...(guestAccessToken ? { guestAccessToken } : {}),
       });
     }
 
-    // 2. Fetch Live Products and Validate Stocks
+    // 1b. Check idempotency key in live MongoDB before product/stock mutation
+    if (cleanIdempotencyKey && typeof Order.findOne === 'function') {
+      const existingOrder = await Order.findOne({ idempotencyKey: cleanIdempotencyKey }).lean();
+      if (existingOrder) {
+        const isOwner = verifyIdempotencyOrderOwnership(existingOrder, {
+          authoritativeUserId,
+          guestEmail: validatedGuestEmail,
+          guestPhone: validatedGuestPhone,
+          shippingPhone: validatedShippingPhone,
+        });
+        if (!isOwner) {
+          return errorResponse('Unauthorized: Duplicate idempotency key belongs to another customer.');
+        }
+        const isExistingGuest = !existingOrder.userId || existingOrder.userId.toString() === 'guest';
+        const guestAccessToken = isExistingGuest
+          ? signGuestOrderToken(existingOrder._id.toString(), existingOrder.orderNumber)
+          : undefined;
+        return successResponse({
+          order: JSON.parse(JSON.stringify(existingOrder)),
+          requiresOtp:
+            existingOrder.paymentMethod === PaymentMethod.COD &&
+            existingOrder.totalAmount > COD_MAX_LIMIT_WITHOUT_OTP,
+          ...(guestAccessToken ? { guestAccessToken } : {}),
+        });
+      }
+    }
+
+    // 2. Fetch Live Products and Validate Stocks (pre-check ObjectId format)
     const productIds = Array.from(new Set(payload.items.map((i) => i.productId)));
+    for (const id of productIds) {
+      if (!Types.ObjectId.isValid(id)) {
+        return errorResponse('One of the selected shoes is no longer available.');
+      }
+    }
     const products = await Product.find({ _id: { $in: productIds }, isActive: true, isDeleted: { $ne: true } });
     const productMap = new Map(products.map((p) => [p._id.toString(), p]));
 
@@ -522,98 +716,83 @@ export async function createOrder(payload: CreateOrderPayload): Promise<ActionRe
       });
     }
 
-    // 0. Derive Authoritative User Identity from Session
-    let session = null;
-    try {
-      session = await getServerSession(authOptions);
-    } catch {
-      session = null;
-    }
-
-    const sessionUser = session?.user as { id?: string; email?: string; role?: string } | undefined;
-    let authoritativeUserId: string | null = null;
-
-    if (sessionUser?.id) {
-      if (payload.userId && payload.userId !== sessionUser.id) {
-        return errorResponse('Unauthorized: Session user mismatch.');
-      }
-      authoritativeUserId = sessionUser.id;
-    }
-
     const cleanEmail = validatedData.guestEmail?.toLowerCase().trim() || '';
-    const cleanPhone = validatedData.guestPhone?.trim() || '';
+    const cleanPhone = validatedGuestPhone || '';
 
-    // 3. Re-validate Coupon if provided
+    // 3. Re-validate Coupon if provided (fail closed if invalid or ineligible)
     let appliedCouponDoc = null;
-    if (validatedData.couponCode) {
+    if (validatedData.couponCode && validatedData.couponCode.trim()) {
       const couponDoc = await Coupon.findOne({ code: validatedData.couponCode.trim().toUpperCase() });
-      if (couponDoc) {
-        const subtotal = orderItems.reduce((acc, curr) => acc + curr.price * curr.quantity, 0);
-        
-        // Per-user limit check
-        const query: any = { couponId: couponDoc._id };
-        if (authoritativeUserId) {
-          query.userId = new Types.ObjectId(authoritativeUserId);
+      if (!couponDoc) {
+        return errorResponse('Invalid or expired promotional coupon code.');
+      }
+
+      const subtotal = orderItems.reduce((acc, curr) => acc + curr.price * curr.quantity, 0);
+
+      // Per-user limit check
+      const query: Record<string, unknown> = { couponId: couponDoc._id };
+      if (authoritativeUserId) {
+        query.userId = new Types.ObjectId(authoritativeUserId);
+      } else {
+        const guestConditions: Array<Record<string, string>> = [];
+        if (cleanEmail) guestConditions.push({ guestEmail: cleanEmail });
+        if (cleanPhone) guestConditions.push({ guestPhone: cleanPhone });
+
+        if (guestConditions.length === 0) {
+          return errorResponse('Coupon requires user contact details for limit verification.');
+        }
+
+        if (guestConditions.length === 1) {
+          Object.assign(query, guestConditions[0]);
         } else {
-          const guestConditions: any[] = [];
-          if (cleanEmail) guestConditions.push({ guestEmail: cleanEmail });
-          if (cleanPhone) guestConditions.push({ guestPhone: cleanPhone });
-
-          if (guestConditions.length === 0) {
-            return errorResponse('Coupon requires user contact details for limit verification.');
-          }
-
-          if (guestConditions.length === 1) {
-            Object.assign(query, guestConditions[0]);
-          } else {
-            query.$or = guestConditions;
-          }
-        }
-        
-        const usageCount = await CouponUsage.countDocuments(query);
-        if (usageCount >= couponDoc.perUserLimit) {
-           return errorResponse('You have already used this coupon.');
-        }
-
-        // First-order check against explicit qualifying order statuses
-        let isFirstOrder = true;
-        const qualifyingStatuses = [
-          OrderStatus.CONFIRMED,
-          OrderStatus.PROCESSING,
-          OrderStatus.SHIPPED,
-          OrderStatus.OUT_FOR_DELIVERY,
-          OrderStatus.DELIVERED,
-          OrderStatus.RETURNED,
-        ];
-
-        let historyFilter: any = null;
-        if (authoritativeUserId) {
-          historyFilter = { userId: new Types.ObjectId(authoritativeUserId) };
-        } else {
-          const guestConditions: any[] = [];
-          if (cleanEmail) guestConditions.push({ guestEmail: cleanEmail });
-          if (cleanPhone) guestConditions.push({ guestPhone: cleanPhone });
-
-          if (guestConditions.length > 0) {
-            historyFilter = guestConditions.length === 1 ? guestConditions[0] : { $or: guestConditions };
-          } else {
-            isFirstOrder = false;
-          }
-        }
-        
-        if (isFirstOrder && historyFilter) {
-          const previousOrdersCount = await Order.countDocuments({ 
-            ...historyFilter, 
-            status: { $in: qualifyingStatuses } 
-          });
-          isFirstOrder = previousOrdersCount === 0;
-        }
-
-        const couponCheck = validateCouponRules(couponDoc, subtotal, products, isFirstOrder);
-        if (couponCheck.valid) {
-          appliedCouponDoc = couponDoc;
+          query.$or = guestConditions;
         }
       }
+
+      const usageCount = await CouponUsage.countDocuments(query);
+      if (usageCount >= couponDoc.perUserLimit) {
+        return errorResponse('You have already used this coupon.');
+      }
+
+      // First-order check against explicit qualifying order statuses
+      let isFirstOrder = true;
+      const qualifyingStatuses = [
+        OrderStatus.CONFIRMED,
+        OrderStatus.PROCESSING,
+        OrderStatus.SHIPPED,
+        OrderStatus.OUT_FOR_DELIVERY,
+        OrderStatus.DELIVERED,
+        OrderStatus.RETURNED,
+      ];
+
+      let historyFilter: Record<string, unknown> | null = null;
+      if (authoritativeUserId) {
+        historyFilter = { userId: new Types.ObjectId(authoritativeUserId) };
+      } else {
+        const guestConditions: Array<Record<string, string>> = [];
+        if (cleanEmail) guestConditions.push({ guestEmail: cleanEmail });
+        if (cleanPhone) guestConditions.push({ guestPhone: cleanPhone });
+
+        if (guestConditions.length > 0) {
+          historyFilter = guestConditions.length === 1 ? guestConditions[0] : { $or: guestConditions };
+        } else {
+          isFirstOrder = false;
+        }
+      }
+
+      if (isFirstOrder && historyFilter) {
+        const previousOrdersCount = await Order.countDocuments({
+          ...historyFilter,
+          status: { $in: qualifyingStatuses },
+        });
+        isFirstOrder = previousOrdersCount === 0;
+      }
+
+      const couponCheck = validateCouponRules(couponDoc, subtotal, products, isFirstOrder);
+      if (!couponCheck.valid) {
+        return errorResponse(couponCheck.message || 'Promotional coupon is not eligible for this order.');
+      }
+      appliedCouponDoc = couponDoc;
     }
 
     // 4. Server-Side Accurate Pricing (Subtotal, 17% GST, Shipping Tariffs, Coupon)
@@ -625,8 +804,16 @@ export async function createOrder(payload: CreateOrderPayload): Promise<ActionRe
     );
 
     // 5. Check if COD requires OTP (orders > PKR 10,000)
-    const isCOD = validatedData.paymentMethod === 'COD';
-    const requiresOtp = isCOD && pricing.totalAmount > COD_MAX_LIMIT_WITHOUT_OTP;
+    const requiresOtp = pricing.totalAmount > COD_MAX_LIMIT_WITHOUT_OTP;
+
+    if (requiresOtp) {
+      const phoneToVerify = validatedData.shippingAddress.phone || validatedData.guestPhone || '';
+      const otpConsume = consumeCodOtpToken(validatedData.codOtpToken, phoneToVerify);
+      if (!otpConsume.valid) {
+        return errorResponse('Phone verification required for Cash on Delivery orders over PKR 10,000.');
+      }
+      consumedOtpJti = otpConsume.jti;
+    }
 
     // 6. Generate Order Number: OX-YYYY-XXXX
     const currentYear = new Date().getFullYear();
@@ -647,12 +834,17 @@ export async function createOrder(payload: CreateOrderPayload): Promise<ActionRe
 
       // 8a. Atomic Global Coupon Capacity Reservation
       if (appliedCouponDoc) {
+        const hasFiniteLimit = Boolean(appliedCouponDoc.usageLimit && appliedCouponDoc.usageLimit > 0);
+        const couponQuery: Record<string, unknown> = {
+          _id: appliedCouponDoc._id,
+          isActive: true,
+        };
+        if (hasFiniteLimit) {
+          couponQuery.$expr = { $lt: ['$usedCount', '$usageLimit'] };
+        }
+
         const reservedCoupon = await Coupon.findOneAndUpdate(
-          {
-            _id: appliedCouponDoc._id,
-            isActive: true,
-            $expr: { $lt: ['$usedCount', '$usageLimit'] },
-          },
+          couponQuery,
           { $inc: { usedCount: 1 } },
           { session: dbSession, returnDocument: 'after' }
         );
@@ -696,7 +888,7 @@ export async function createOrder(payload: CreateOrderPayload): Promise<ActionRe
             orderNumber,
             userId: authoritativeUserId ? new Types.ObjectId(authoritativeUserId) : null,
             guestEmail: validatedData.guestEmail || '',
-            guestPhone: validatedData.guestPhone || '',
+            guestPhone: validatedGuestPhone || '',
             orderItems,
             subtotal: pricing.subtotal,
             discountAmount: pricing.discountAmount,
@@ -715,12 +907,13 @@ export async function createOrder(payload: CreateOrderPayload): Promise<ActionRe
               ...(sanitizedCoordinates ? { coordinates: sanitizedCoordinates } : {}),
             },
             status: OrderStatus.CONFIRMED,
-            paymentMethod: validatedData.paymentMethod as PaymentMethod,
-            paymentStatus: isCOD ? PaymentStatus.PENDING : PaymentStatus.PAID,
+            paymentMethod: PaymentMethod.COD,
+            paymentStatus: PaymentStatus.PENDING,
             courier,
             trackingNumber,
             notes: validatedData.notes,
             verificationToken: generateVerificationToken(),
+            ...(cleanIdempotencyKey ? { idempotencyKey: cleanIdempotencyKey } : {}),
           },
         ],
         { session: dbSession }
@@ -744,72 +937,140 @@ export async function createOrder(payload: CreateOrderPayload): Promise<ActionRe
         await CouponUsage.create([usagePayload], { session: dbSession });
       }
 
+      const isGuestOrder = !newOrder.userId || newOrder.userId.toString() === 'guest';
+      const guestAccessToken = isGuestOrder
+        ? signGuestOrderToken(newOrder._id.toString(), newOrder.orderNumber)
+        : undefined;
+
       return successResponse({
         order: JSON.parse(JSON.stringify(newOrder)),
         requiresOtp,
+        ...(guestAccessToken ? { guestAccessToken } : {}),
       });
     });
   } catch (error: unknown) {
+    if (cleanIdempotencyKey && isIdempotencyDuplicateKeyError(error) && typeof Order.findOne === 'function') {
+      try {
+        const existingOrder = await Order.findOne({ idempotencyKey: cleanIdempotencyKey }).lean();
+        if (existingOrder) {
+          const isOwner = verifyIdempotencyOrderOwnership(existingOrder, {
+            authoritativeUserId,
+            guestEmail: validatedGuestEmail,
+            guestPhone: validatedGuestPhone,
+            shippingPhone: validatedShippingPhone,
+          });
+          if (!isOwner) {
+            return errorResponse('Unauthorized: Duplicate idempotency key belongs to another customer.');
+          }
+          const isExistingGuest = !existingOrder.userId || existingOrder.userId.toString() === 'guest';
+          const guestAccessToken = isExistingGuest
+            ? signGuestOrderToken(existingOrder._id.toString(), existingOrder.orderNumber)
+            : undefined;
+          return successResponse({
+            order: JSON.parse(JSON.stringify(existingOrder)),
+            requiresOtp:
+              existingOrder.paymentMethod === PaymentMethod.COD &&
+              existingOrder.totalAmount > COD_MAX_LIMIT_WITHOUT_OTP,
+            ...(guestAccessToken ? { guestAccessToken } : {}),
+          });
+        }
+      } catch {
+        // Fall through to handleActionError if lookup also fails
+      }
+    }
+    releaseCodOtpToken(consumedOtpJti);
     return handleActionError(error);
   }
 }
 
-export async function getOrderById(orderId: string): Promise<ActionResult<IOrder>> {
+export async function getOrderById(
+  orderId: string,
+  accessToken?: string
+): Promise<ActionResult<IOrder>> {
   try {
-    const auth = await verifyDepartmentAuth({
-      requiredDepartment: Department.ORDERS,
-      requiredPermission: 'orders:read',
-    });
-
-    // If not authorized as admin/manager, we must verify customer ownership
-    let sessionUser: { id: string; role: string; email?: string } | null = null;
-    if (auth.authorized) {
-      sessionUser = { id: auth.userId || '', role: auth.role || UserRole.CUSTOMER };
-    } else {
-      const session = await getServerSession(authOptions);
-      if (!session?.user) {
-        return errorResponse(auth.error || 'Unauthenticated: Please sign in to view order details.');
-      }
-      sessionUser = session.user as { id: string; role: string; email?: string };
+    if (!orderId || typeof orderId !== 'string' || !orderId.trim()) {
+      return errorResponse('Invalid order identifier.');
     }
+    const cleanOrderId = orderId.trim();
 
     await connectToDatabase();
 
+    let orderDoc: (IOrder & { _id: Types.ObjectId | string }) | null = null;
     if (!isDatabaseConnected()) {
       if (!canUseMockDatabase()) {
         return errorResponse('Database connection unavailable.');
       }
-      const mockOrder = MockDb.getOrderById(orderId);
-      if (mockOrder) {
-        const orderOwnerId = mockOrder.userId?.toString();
-        // If not authorized as admin, must be the owner
-        if (!auth.authorized && orderOwnerId !== sessionUser.id) {
-          return errorResponse("Unauthorized: Cannot access another customer's order.");
-        }
-        return successResponse(mockOrder);
+      orderDoc = (MockDb.getOrderById(cleanOrderId) as unknown as (IOrder & { _id: Types.ObjectId | string }) | null) || null;
+    } else {
+      if (Types.ObjectId.isValid(cleanOrderId)) {
+        orderDoc = await Order.findById(cleanOrderId).lean();
       }
+      if (!orderDoc) {
+        orderDoc = await Order.findOne({ orderNumber: cleanOrderId.toUpperCase() }).lean();
+      }
+    }
+
+    if (!orderDoc) {
       return errorResponse('Order not found.');
     }
 
-    const order = await Order.findById(orderId).lean();
-    if (!order) {
-      return errorResponse('Order not found.');
+    const orderObj = JSON.parse(JSON.stringify(orderDoc)) as IOrder;
+
+    // 1. Guest Access Token Verification (Cryptographic proof of order creation possession, strictly for guest orders)
+    const isGuestOrderDoc = !orderDoc.userId || orderDoc.userId.toString() === 'guest';
+    if (
+      accessToken &&
+      isGuestOrderDoc &&
+      verifyGuestOrderToken(
+        accessToken,
+        orderDoc._id.toString(),
+        orderDoc.orderNumber
+      )
+    ) {
+      return successResponse(orderObj);
     }
 
-    // Verify ownership or administrative clearance
-    if (!auth.authorized && order.userId?.toString() !== sessionUser.id) {
-      // Allow guest orders if email matches AND user has verified their email identity
-      const session = await getServerSession(authOptions);
-      const sessionEmail = session?.user?.email?.toLowerCase().trim();
-      const orderGuestEmail = order.guestEmail?.toLowerCase().trim();
-      
-      if (orderGuestEmail && orderGuestEmail === sessionEmail && (session?.user as any)?.isEmailVerified) {
-        return successResponse(JSON.parse(JSON.stringify(order)));
+    // 2. Department / Elevated Admin Authorization
+    const auth = await verifyDepartmentAuth({
+      requiredDepartment: Department.ORDERS,
+      requiredPermission: 'orders:read',
+    });
+    if (auth.authorized) {
+      return successResponse(orderObj);
+    }
+
+    if (canUseMockDatabase()) {
+      const session = await getServerSession(authOptions).catch(() => null);
+      if (isElevatedAdminRole((session?.user as { role?: string } | undefined)?.role)) {
+        return successResponse(orderObj);
       }
-      return errorResponse("Unauthorized: Cannot access another customer's order.");
     }
 
-    return successResponse(JSON.parse(JSON.stringify(order)));
+    // 3. Customer Session Ownership Verification
+    const session = await getServerSession(authOptions).catch(() => null);
+    const sessionUser = session?.user as
+      | { id?: string; email?: string; role?: string; isEmailVerified?: boolean }
+      | undefined;
+
+    if (!sessionUser) {
+      return errorResponse(
+        'Unauthenticated: Please sign in or provide a valid access token to view order details.'
+      );
+    }
+
+    const orderOwnerId = orderDoc.userId?.toString();
+    if (orderOwnerId && orderOwnerId === sessionUser.id) {
+      return successResponse(orderObj);
+    }
+
+    // Verified email match for guest orders
+    const sessionEmail = sessionUser.email?.toLowerCase().trim();
+    const orderGuestEmail = orderDoc.guestEmail?.toLowerCase().trim();
+    if (orderGuestEmail && orderGuestEmail === sessionEmail && sessionUser.isEmailVerified) {
+      return successResponse(orderObj);
+    }
+
+    return errorResponse("Unauthorized: Cannot access another customer's order.");
   } catch (error: unknown) {
     return handleActionError(error);
   }
@@ -906,6 +1167,11 @@ export async function trackOrder(
           }
         : undefined;
 
+    const isGuestTrackedOrder = !order.userId || order.userId.toString() === 'guest';
+    const guestAccessToken = isGuestTrackedOrder
+      ? signGuestOrderToken(order._id.toString(), order.orderNumber)
+      : undefined;
+
     const dto: ITrackOrderDTO = {
       _id: order._id.toString(),
       orderNumber: order.orderNumber,
@@ -917,7 +1183,8 @@ export async function trackOrder(
       trackingNumber: order.trackingNumber,
       destinationCity: order.shippingAddress?.city || undefined,
       ...(validDestCoords ? { destinationCoordinates: validDestCoords } : {}),
-      orderItems: order.orderItems.map((item: any) => ({
+      ...(guestAccessToken ? { guestAccessToken } : {}),
+      orderItems: order.orderItems.map((item: { name: string; size: string; color: string; quantity: number; price: number }) => ({
         name: item.name,
         size: item.size,
         color: item.color,

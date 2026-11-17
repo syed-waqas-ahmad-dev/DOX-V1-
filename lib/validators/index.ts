@@ -47,16 +47,28 @@ export const addressSchema = z.object({
 export type AddressInput = z.infer<typeof addressSchema>;
 
 export const checkoutOrderSchema = z.object({
-  guestEmail: z.string().email().optional(),
+  guestEmail: z.string().email().optional().or(z.literal('')),
   guestPhone: z
     .string()
     .regex(/^\+923\d{9}$/, 'Pakistani mobile number required')
-    .optional(),
+    .optional()
+    .or(z.literal('')),
   shippingAddress: addressSchema.omit({ label: true, isDefault: true }),
-  paymentMethod: z.union([z.nativeEnum(PaymentMethod), z.string()]),
+  paymentMethod: z
+    .string()
+    .refine((val): val is PaymentMethod => val === PaymentMethod.COD, {
+      message: 'Only Cash on Delivery (COD) is supported.',
+    }),
   couponCode: z.string().optional(),
   walletCreditUsed: z.number().min(0).optional(),
   notes: z.string().max(500).optional(),
+  idempotencyKey: z
+    .string()
+    .trim()
+    .min(8, 'Invalid idempotency key')
+    .max(128, 'Idempotency key too long')
+    .optional(),
+  codOtpToken: z.string().optional(),
 });
 export type CheckoutOrderInput = z.infer<typeof checkoutOrderSchema>;
 

@@ -32,6 +32,7 @@ function ShopContent() {
   const [products, setProducts] = useState<IProduct[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [searchModalOpen, setSearchModalOpen] = useState(false);
   const [mobileFilterOpen, setMobileFilterOpen] = useState(false);
 
@@ -53,22 +54,30 @@ function ShopContent() {
 
   const loadProducts = useCallback(async () => {
     setLoading(true);
-    const res = await getProducts({
-      category: selectedCategory ? (selectedCategory as ProductCategory) : undefined,
-      subCategory: selectedSubCategory ? (selectedSubCategory as ProductSubCategory) : undefined,
-      maxPrice,
-      inStock: inStockOnly,
-      onSale: onSaleOnly,
-      search: searchQuery,
-      sortBy,
-      limit: 24,
-    });
+    setFetchError(null);
+    try {
+      const res = await getProducts({
+        category: selectedCategory ? (selectedCategory as ProductCategory) : undefined,
+        subCategory: selectedSubCategory ? (selectedSubCategory as ProductSubCategory) : undefined,
+        maxPrice,
+        inStock: inStockOnly,
+        onSale: onSaleOnly,
+        search: searchQuery,
+        sortBy,
+        limit: 24,
+      });
 
-    if (res.success) {
-      setProducts(res.data.products);
-      setTotal(res.data.total);
+      if (res.success) {
+        setProducts(res.data.products);
+        setTotal(res.data.total);
+      } else {
+        setFetchError(res.error || 'Unable to load footwear catalog.');
+      }
+    } catch {
+      setFetchError('Unable to load footwear catalog.');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, [selectedCategory, selectedSubCategory, maxPrice, inStockOnly, onSaleOnly, searchQuery, sortBy]);
 
   useEffect(() => {
@@ -82,15 +91,23 @@ function ShopContent() {
       search: searchQuery,
       sortBy,
       limit: 24,
-    }).then((res) => {
-      if (active) {
+    })
+      .then((res) => {
+        if (!active) return;
         if (res.success) {
           setProducts(res.data.products);
           setTotal(res.data.total);
+          setFetchError(null);
+        } else {
+          setFetchError(res.error || 'Unable to load footwear catalog.');
         }
         setLoading(false);
-      }
-    });
+      })
+      .catch(() => {
+        if (!active) return;
+        setFetchError('Unable to load footwear catalog.');
+        setLoading(false);
+      });
 
     return () => {
       active = false;
@@ -291,6 +308,22 @@ function ShopContent() {
                     <div className="h-4 bg-neutral-200 rounded w-1/2" />
                   </div>
                 ))}
+              </div>
+            ) : fetchError ? (
+              <div className="py-20 text-center rounded-2xl bg-amber-50 border border-amber-200 p-8 space-y-4">
+                <h3 className="font-black text-lg text-neutral-950 uppercase tracking-tight">
+                  Catalog Temporarily Unavailable
+                </h3>
+                <p className="text-xs text-neutral-600 max-w-sm mx-auto">
+                  {fetchError}
+                </p>
+                <button
+                  type="button"
+                  onClick={loadProducts}
+                  className="px-6 py-2.5 rounded-full bg-neutral-950 text-white text-xs font-bold uppercase tracking-wider hover:bg-neutral-800 transition-colors"
+                >
+                  Retry
+                </button>
               </div>
             ) : products.length > 0 ? (
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-5">

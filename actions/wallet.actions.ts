@@ -8,7 +8,7 @@
  * Strict TypeScript: ZERO `any`.
  */
 
-import { connectToDatabase, isDatabaseConnected } from '@/lib/db/connect';
+import { canUseMockDatabase, connectToDatabase, isDatabaseConnected } from '@/lib/db/connect';
 import { User } from '@/models/User';
 import { WalletTransaction } from '@/models/WalletTransaction';
 import { successResponse, errorResponse, type ActionResult } from '@/lib/response';
@@ -67,20 +67,29 @@ export async function getWalletBalance(userId?: string): Promise<ActionResult<{ 
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable: Unable to retrieve wallet balance.');
+      }
       const balance = MockDb.getWalletBalance(cleanTargetId);
       return successResponse({ balance });
     }
 
     const user = await User.findById(cleanTargetId).select('walletBalance').lean();
     if (!user) {
-      const balance = MockDb.getWalletBalance(cleanTargetId);
-      return successResponse({ balance });
+      if (canUseMockDatabase()) {
+        const balance = MockDb.getWalletBalance(cleanTargetId);
+        return successResponse({ balance });
+      }
+      return errorResponse('User not found.');
     }
 
     return successResponse({ balance: user.walletBalance || 0 });
   } catch (error: unknown) {
-    const balance = MockDb.getWalletBalance(targetUserId || '');
-    return successResponse({ balance });
+    if (canUseMockDatabase()) {
+      const balance = MockDb.getWalletBalance(targetUserId || '');
+      return successResponse({ balance });
+    }
+    return handleActionError(error);
   }
 }
 
@@ -175,6 +184,9 @@ export async function getWalletTransactions(
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable: Unable to retrieve transaction history.');
+      }
       const txs = MockDb.getWalletTransactions(cleanTargetId);
       return successResponse(txs as IWalletTransaction[]);
     }
@@ -187,14 +199,20 @@ export async function getWalletTransactions(
       .lean();
 
     if (!txs || txs.length === 0) {
-      const mockTxs = MockDb.getWalletTransactions(cleanTargetId);
-      return successResponse(mockTxs as IWalletTransaction[]);
+      if (canUseMockDatabase()) {
+        const mockTxs = MockDb.getWalletTransactions(cleanTargetId);
+        return successResponse(mockTxs as IWalletTransaction[]);
+      }
+      return successResponse([]);
     }
 
     return successResponse(JSON.parse(JSON.stringify(txs)));
   } catch (error: unknown) {
-    const mockTxs = MockDb.getWalletTransactions(targetUserId || '');
-    return successResponse(mockTxs as IWalletTransaction[]);
+    if (canUseMockDatabase()) {
+      const mockTxs = MockDb.getWalletTransactions(targetUserId || '');
+      return successResponse(mockTxs as IWalletTransaction[]);
+    }
+    return handleActionError(error);
   }
 }
 
@@ -216,7 +234,9 @@ export async function adminAdjustWallet(
       session = null;
     }
 
-    if (!session?.user || !isElevatedAdminRole((session.user as { role?: string }).role)) {
+    const auth = await verifyDepartmentAuth({ allowElevatedAdmin: true });
+    const isOfflineTestSession = canUseMockDatabase() && isElevatedAdminRole((session?.user as { role?: string } | undefined)?.role);
+    if (!auth.authorized && !isOfflineTestSession) {
       return errorResponse('Unauthorized: Administrative clearance required.');
     }
 
@@ -271,13 +291,18 @@ export async function getAllWalletOverviewAdmin(): Promise<
       session = null;
     }
 
-    if (!session?.user || !isElevatedAdminRole((session.user as { role?: string }).role)) {
+    const auth = await verifyDepartmentAuth({ allowElevatedAdmin: true });
+    const isOfflineTestSession = canUseMockDatabase() && isElevatedAdminRole((session?.user as { role?: string } | undefined)?.role);
+    if (!auth.authorized && !isOfflineTestSession) {
       return errorResponse('Unauthorized: Administrative clearance required.');
     }
 
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable: Unable to retrieve wallet overview.');
+      }
       const txs = MockDb.getWalletTransactions();
       const credits = txs.filter((t) => t.type === 'credit').reduce((s, t) => s + t.amount, 0);
       const debits = txs.filter((t) => t.type === 'debit').reduce((s, t) => s + t.amount, 0);

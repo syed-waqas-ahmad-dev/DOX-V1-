@@ -8,8 +8,7 @@
  */
 
 import { NextResponse, type NextRequest } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
+import { verifySuperAdminAuth } from '@/lib/auth-guard';
 import { UserRole } from '@/types';
 import fs from 'fs';
 import path from 'path';
@@ -41,8 +40,7 @@ const NON_SENSITIVE_KEYS: ReadonlySet<string> = new Set([
 
 function maskSecret(val: string): string {
   if (!val) return '';
-  if (val.length <= 8) return '••••••••';
-  return `${val.slice(0, 3)}••••••••${val.slice(-3)}`;
+  return '••••••••';
 }
 
 function readCurrentLocalEnv(): Record<string, string> {
@@ -80,24 +78,22 @@ function readCurrentLocalEnv(): Record<string, string> {
 
 export async function GET() {
   try {
-    let session = null;
-    try {
-      session = await getServerSession(authOptions);
-    } catch {
-      session = null;
-    }
-    const sessionRole = (session?.user as { role?: string } | undefined)?.role;
-
-    if (!session?.user) {
+    const auth = await verifySuperAdminAuth();
+    if (!auth.authorized) {
+      if (auth.error?.includes('Unauthenticated') || auth.error?.includes('Valid session required')) {
+        return NextResponse.json(
+          { success: false, error: auth.error || 'Unauthorized: Authentication required.' },
+          { status: 401 }
+        );
+      }
+      if (auth.error?.includes('Database')) {
+        return NextResponse.json(
+          { success: false, error: auth.error || 'Database connection unavailable.' },
+          { status: 503 }
+        );
+      }
       return NextResponse.json(
-        { success: false, error: 'Unauthorized: Authentication required.' },
-        { status: 401 }
-      );
-    }
-
-    if (sessionRole !== UserRole.SUPER_ADMIN) {
-      return NextResponse.json(
-        { success: false, error: 'Forbidden: Super Administrator privilege required.' },
+        { success: false, error: auth.error || 'Forbidden: Super Administrator privilege required.' },
         { status: 403 }
       );
     }
@@ -128,24 +124,22 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
-    let session = null;
-    try {
-      session = await getServerSession(authOptions);
-    } catch {
-      session = null;
-    }
-    const sessionRole = (session?.user as { role?: string } | undefined)?.role;
-
-    if (!session?.user) {
+    const auth = await verifySuperAdminAuth();
+    if (!auth.authorized) {
+      if (auth.error?.includes('Unauthenticated') || auth.error?.includes('Valid session required')) {
+        return NextResponse.json(
+          { success: false, error: auth.error || 'Unauthorized: Authentication required.' },
+          { status: 401 }
+        );
+      }
+      if (auth.error?.includes('Database')) {
+        return NextResponse.json(
+          { success: false, error: auth.error || 'Database connection unavailable.' },
+          { status: 503 }
+        );
+      }
       return NextResponse.json(
-        { success: false, error: 'Unauthorized: Authentication required.' },
-        { status: 401 }
-      );
-    }
-
-    if (sessionRole !== UserRole.SUPER_ADMIN) {
-      return NextResponse.json(
-        { success: false, error: 'Forbidden: Super Administrator privilege required.' },
+        { success: false, error: auth.error || 'Forbidden: Super Administrator privilege required.' },
         { status: 403 }
       );
     }

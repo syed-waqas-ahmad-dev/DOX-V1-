@@ -7,7 +7,7 @@
  * Strict TypeScript: ZERO `any`.
  */
 
-import { connectToDatabase, isDatabaseConnected } from '@/lib/db/connect';
+import { canUseMockDatabase, connectToDatabase, isDatabaseConnected } from '@/lib/db/connect';
 import { DeliveryPartner } from '@/models/DeliveryPartner';
 import { DeliveryAssignment } from '@/models/DeliveryAssignment';
 import { DeliveryLog } from '@/models/DeliveryLog';
@@ -164,6 +164,9 @@ async function verifyRiderOrAdminAuth(targetPartnerId?: string): Promise<{
         return { authorized: false, isAdmin: false, actorId: null, partnerId: null };
       }
     } else {
+      if (!canUseMockDatabase()) {
+        return { authorized: false, isAdmin: false, actorId: null, partnerId: null };
+      }
       const mockPartner = MockDb.getDeliveryPartnerById(resolvedRiderId);
       if (!mockPartner || mockPartner.isDeleted || mockPartner.status !== DeliveryPartnerStatus.ACTIVE) {
         return { authorized: false, isAdmin: false, actorId: null, partnerId: null };
@@ -278,6 +281,9 @@ export async function getAllDeliveryPartners(filters?: {
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable.');
+      }
       const mockPartners = MockDb.getDeliveryPartners(filters);
       return successResponse(mockPartners, 'Delivery partners fetched from store.');
     }
@@ -311,6 +317,9 @@ export async function getDeliveryPartnerById(id: string): Promise<ActionResult<I
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable.');
+      }
       const partner = MockDb.getDeliveryPartnerById(id);
       return successResponse(partner, 'Delivery partner retrieved.');
     }
@@ -341,6 +350,9 @@ export async function createDeliveryPartner(
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable. Cannot create delivery partner.');
+      }
       const existing = MockDb.getDeliveryPartnerByPhone(cleanPhone);
       if (existing) {
         return errorResponse(`A delivery partner with phone ${cleanPhone} already exists.`);
@@ -427,6 +439,9 @@ export async function updateDeliveryPartner(
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable. Cannot update delivery partner.');
+      }
       const updated = MockDb.updateDeliveryPartner(input.id, input);
       if (!updated) return errorResponse('Delivery partner not found.');
       return successResponse(updated, 'Delivery partner updated successfully.');
@@ -488,6 +503,9 @@ export async function deleteDeliveryPartner(id: string): Promise<ActionResult<{ 
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable. Cannot delete delivery partner.');
+      }
       const ok = MockDb.deleteDeliveryPartner(id);
       return ok ? successResponse({ success: true }, 'Partner deactivated.') : errorResponse('Partner not found.');
     }
@@ -510,6 +528,9 @@ export async function markCodReceivedInOffice(partnerId: string): Promise<Action
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable. Cannot settle COD balance.');
+      }
       const partner = MockDb.getDeliveryPartnerById(partnerId);
       if (!partner) return errorResponse('Partner not found.');
       const amount = partner.codCollectedBalance || 0;
@@ -559,6 +580,9 @@ export async function getActiveRidersForCity(
         : resolveCityCoordinates(city);
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable.');
+      }
       const riders = MockDb.getDeliveryPartners({ city, status: DeliveryPartnerStatus.ACTIVE });
       const enriched = await Promise.all(
         riders.map(async (r) => {
@@ -633,6 +657,9 @@ export async function assignOrderToPartner(
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable. Cannot assign order.');
+      }
       const order = MockDb.getOrderById(input.orderId);
       const partner = MockDb.getDeliveryPartnerById(input.partnerId);
 
@@ -765,6 +792,9 @@ export async function reassignOrder(
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable. Cannot reassign order.');
+      }
       const assignment = MockDb.getDeliveryAssignmentById(assignmentId);
       const order = assignment ? MockDb.getOrderById(assignment.orderId.toString()) : null;
       if (!order) return errorResponse('Order not found');
@@ -825,6 +855,9 @@ export async function unassignOrder(assignmentId: string, expectedVersion: numbe
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable. Cannot unassign order.');
+      }
       const assignment = MockDb.getDeliveryAssignmentById(assignmentId);
       const order = assignment ? MockDb.getOrderById(assignment.orderId.toString()) : null;
       if (!order) return errorResponse('Order not found');
@@ -872,6 +905,9 @@ export async function getAllDeliveryAssignments(filters?: {
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable.');
+      }
       const assignments = MockDb.getDeliveryAssignments(filters);
       return successResponse(assignments, 'Delivery assignments retrieved.');
     }
@@ -924,6 +960,9 @@ export async function getDeliveryDashboardMetrics(): Promise<
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable.');
+      }
       const partners = MockDb.getDeliveryPartners({});
       const assignments = MockDb.getDeliveryAssignments({});
       const activePartners = partners.filter((p) => p.status === DeliveryPartnerStatus.ACTIVE).length;
@@ -993,6 +1032,9 @@ export async function riderLogin(phone: string, password: string): Promise<Actio
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable. Rider authentication offline.');
+      }
       const mockPartner = MockDb.getDeliveryPartnerByPhone(cleanPhone);
       if (!mockPartner) {
         return errorResponse('No delivery partner account found with this phone number. Please contact Admin.');
@@ -1103,6 +1145,9 @@ export async function getCurrentRiderProfile(): Promise<ActionResult<IDeliveryPa
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable.');
+      }
       const partner = MockDb.getDeliveryPartnerById(auth.partnerId);
       if (!partner) return errorResponse('Delivery partner not found.');
       return successResponse(partner);
@@ -1139,6 +1184,9 @@ export async function getRiderAssignments(partnerId?: string): Promise<ActionRes
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable.');
+      }
       const assignments = MockDb.getDeliveryAssignments({ partnerId: resolvedPartnerId });
       return successResponse(assignments, 'Rider assignments retrieved.');
     }
@@ -1179,6 +1227,9 @@ export async function updateRiderAssignmentStatus(
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable.');
+      }
       const assignment = MockDb.getDeliveryAssignmentById(input.assignmentId);
       if (!assignment) return errorResponse('Assignment not found.');
 
@@ -1466,6 +1517,9 @@ export async function updateRiderLocation(
     await connectToDatabase();
 
     if (!isDatabaseConnected()) {
+      if (!canUseMockDatabase()) {
+        return errorResponse('Database connection unavailable.');
+      }
       MockDb.updateDeliveryPartner(targetPartnerId, {
         currentLat: lat,
         currentLng: lng,

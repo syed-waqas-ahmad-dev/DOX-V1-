@@ -34,7 +34,7 @@ import {
 import { getAllOrders, getOrderById } from '@/actions/order.actions';
 import { formatPKR } from '@/lib/formatters/currency';
 import { formatDate } from '@/lib/formatters/date';
-import { PAKISTAN_MAJOR_CITIES } from '@/lib/constants';
+import { DELIVERY_PARTNER_CITIES } from '@/lib/constants';
 import {
   DeliveryPartnerStatus,
   DeliveryAssignmentStatus,
@@ -833,14 +833,11 @@ export default function AdminDeliveryPartnersPage() {
               className="bg-neutral-900 border border-neutral-800 text-neutral-200 text-xs px-3 py-1.5 rounded-xl focus:outline-none focus:border-amber-400"
             >
               <option value="all">All Cities (Pakistan)</option>
-              <option value="Bajaur">Bajaur</option>
-              <option value="Peshawar">Peshawar (Hub)</option>
-              <option value="Lahore">Lahore</option>
-              <option value="Islamabad">Islamabad</option>
-              <option value="Rawalpindi">Rawalpindi</option>
-              <option value="Karachi">Karachi</option>
-              <option value="Faisalabad">Faisalabad</option>
-              <option value="Multan">Multan</option>
+              {DELIVERY_PARTNER_CITIES.map((c) => (
+                <option key={c} value={c}>
+                  {c === 'Peshawar' ? 'Peshawar (Hub)' : c}
+                </option>
+              ))}
             </select>
           </div>
         </div>
@@ -1342,7 +1339,7 @@ export default function AdminDeliveryPartnersPage() {
                     onChange={(e) => setNewPartner({ ...newPartner, city: e.target.value })}
                     className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-amber-400 disabled:opacity-60"
                   >
-                    {PAKISTAN_MAJOR_CITIES.map((c) => (
+                    {DELIVERY_PARTNER_CITIES.map((c) => (
                       <option key={c} value={c}>
                         {c}
                       </option>
@@ -1696,7 +1693,10 @@ export default function AdminDeliveryPartnersPage() {
                     onChange={(e) => setEditingPartner({ ...editingPartner, city: e.target.value })}
                     className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-amber-400 disabled:opacity-60"
                   >
-                    {PAKISTAN_MAJOR_CITIES.map((c) => (
+                    {editingPartner.city && !DELIVERY_PARTNER_CITIES.includes(editingPartner.city) && (
+                      <option value={editingPartner.city}>{editingPartner.city}</option>
+                    )}
+                    {DELIVERY_PARTNER_CITIES.map((c) => (
                       <option key={c} value={c}>
                         {c}
                       </option>

@@ -64,6 +64,23 @@ export const PAKISTAN_MAJOR_CITIES = [
   'Sahiwal',
 ];
 
+export const MALAKAND_DIVISION_DISTRICTS = [
+  'Bajaur',
+  'Buner',
+  'Lower Chitral',
+  'Upper Chitral',
+  'Lower Dir',
+  'Upper Dir',
+  'Malakand',
+  'Shangla',
+  'Swat',
+  'Bar Swat',
+] as const;
+
+export const DELIVERY_PARTNER_CITIES: string[] = Array.from(
+  new Set<string>([...PAKISTAN_MAJOR_CITIES, ...MALAKAND_DIVISION_DISTRICTS])
+);
+
 export const PAYMENT_METHOD_DETAILS = {
   COD: {
     label: 'Cash on Delivery (COD)',

@@ -26,6 +26,15 @@ export const CITY_COORDINATES: Record<string, [number, number]> = {
   Sheikhupura: [31.7131, 73.9783],
   Gujrat: [32.5742, 74.0754],
   Sahiwal: [30.6682, 73.1114],
+  // Malakand Division districts (verified district-level coordinates; Bajaur already defined above)
+  Buner: [34.5114, 72.4839],
+  'Lower Dir': [34.8519, 71.8534],
+  'Upper Dir': [35.2067, 71.8767],
+  Malakand: [34.5, 71.75],
+  Shangla: [34.8873, 72.5991],
+  Swat: [35.2, 72.4833],
+  // Checkout cityOptions ('Swat (Mingora)') stores 'Mingora'; include city coordinates for map/Haversine resolution
+  Mingora: [34.7717, 72.36],
 };
 
 const NORMALIZED_CITY_INDEX: Record<string, [number, number]> = Object.fromEntries(

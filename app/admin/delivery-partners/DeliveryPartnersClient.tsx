@@ -21,7 +21,6 @@ import { Logo } from '@/components/layout/Logo';
 import { DeliveryPartnersMap } from '@/components/maps/DeliveryPartnersMap';
 import {
   getAllDeliveryPartners,
-  createDeliveryPartner,
   updateDeliveryPartner,
   deleteDeliveryPartner,
   markCodReceivedInOffice,
@@ -74,7 +73,9 @@ import {
   Compass,
   ArrowRight,
   Sparkles,
+  Loader2,
 } from 'lucide-react';
+import { RiderPhotoUploadField } from '@/components/admin/delivery-partners/RiderPhotoUploadField';
 
 export default function AdminDeliveryPartnersPage() {
   const [activeTab, setActiveTab] = useState<'partners' | 'map' | 'assignments' | 'cod'>('partners');
@@ -115,8 +116,55 @@ export default function AdminDeliveryPartnersPage() {
     password: '',
     area: '',
     city: 'Peshawar',
-    photo: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=400&q=80',
   });
+
+  // Rider Photo Upload State (Register Modal)
+  const [selectedRiderPhoto, setSelectedRiderPhoto] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [addModalError, setAddModalError] = useState<string | null>(null);
+  const riderPhotoInputRef = useRef<HTMLInputElement | null>(null);
+  const previewUrlRef = useRef<string | null>(null);
+  const createSubmittingRef = useRef(false);
+
+  // Rider Photo Upload State (Edit Modal)
+  const [editSelectedRiderPhoto, setEditSelectedRiderPhoto] = useState<File | null>(null);
+  const [editPreviewUrl, setEditPreviewUrl] = useState<string | null>(null);
+  const [editPhotoRemoved, setEditPhotoRemoved] = useState(false);
+  const [isUpdatingPartner, setIsUpdatingPartner] = useState(false);
+  const [editUploadError, setEditUploadError] = useState<string | null>(null);
+  const [editModalError, setEditModalError] = useState<string | null>(null);
+  const editRiderPhotoInputRef = useRef<HTMLInputElement | null>(null);
+  const editPreviewUrlRef = useRef<string | null>(null);
+  const updateSubmittingRef = useRef(false);
+
+  const replaceAddPreviewUrl = useCallback((nextUrl: string | null) => {
+    if (previewUrlRef.current) {
+      URL.revokeObjectURL(previewUrlRef.current);
+    }
+    previewUrlRef.current = nextUrl;
+    setPreviewUrl(nextUrl);
+  }, []);
+
+  const replaceEditPreviewUrl = useCallback((nextUrl: string | null) => {
+    if (editPreviewUrlRef.current) {
+      URL.revokeObjectURL(editPreviewUrlRef.current);
+    }
+    editPreviewUrlRef.current = nextUrl;
+    setEditPreviewUrl(nextUrl);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (previewUrlRef.current) {
+        URL.revokeObjectURL(previewUrlRef.current);
+      }
+      if (editPreviewUrlRef.current) {
+        URL.revokeObjectURL(editPreviewUrlRef.current);
+      }
+    };
+  }, []);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -225,57 +273,249 @@ export default function AdminDeliveryPartnersPage() {
     setTimeout(() => setStatusNotice(null), 4000);
   };
 
-  // Create Partner
-  const handleCreatePartner = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newPartner.name || !newPartner.phone || !newPartner.password) {
-      showFeedback('error', 'Please fill in Name, Phone, and Password.');
-      return;
+  const resetAddPartnerForm = useCallback(() => {
+    setNewPartner({
+      name: '',
+      phone: '',
+      cnic: '',
+      bikeNumber: '',
+      password: '',
+      area: '',
+      city: 'Peshawar',
+    });
+    setSelectedRiderPhoto(null);
+    replaceAddPreviewUrl(null);
+    setUploadError(null);
+    setAddModalError(null);
+    if (riderPhotoInputRef.current) {
+      riderPhotoInputRef.current.value = '';
     }
+  }, [replaceAddPreviewUrl]);
 
-    const res = await createDeliveryPartner(newPartner);
-    if (res.success) {
-      showFeedback('success', res.message || 'Delivery Partner registered successfully!');
-      setShowAddPartnerModal(false);
-      setNewPartner({
-        name: '',
-        phone: '',
-        cnic: '',
-        bikeNumber: '',
-        password: '',
-        area: '',
-        city: 'Peshawar',
-        photo: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=400&q=80',
-      });
-      loadData();
-    } else {
-      showFeedback('error', res.error || 'Failed to create partner.');
+  const handleCloseAddModal = () => {
+    if (isUploading) return;
+    resetAddPartnerForm();
+    setShowAddPartnerModal(false);
+  };
+
+  const handleSelectAddRiderPhoto = (file: File) => {
+    setSelectedRiderPhoto(file);
+    setUploadError(null);
+    setAddModalError(null);
+    replaceAddPreviewUrl(URL.createObjectURL(file));
+  };
+
+  const handleRemoveAddRiderPhoto = () => {
+    setSelectedRiderPhoto(null);
+    setUploadError(null);
+    replaceAddPreviewUrl(null);
+    if (riderPhotoInputRef.current) {
+      riderPhotoInputRef.current.value = '';
     }
   };
 
-  // Update Partner
+  const openEditPartnerModal = (partner: IDeliveryPartner) => {
+    setEditSelectedRiderPhoto(null);
+    replaceEditPreviewUrl(null);
+    setEditPhotoRemoved(false);
+    setEditUploadError(null);
+    setEditModalError(null);
+    if (editRiderPhotoInputRef.current) {
+      editRiderPhotoInputRef.current.value = '';
+    }
+    setEditingPartner({ ...partner, password: '' });
+  };
+
+  const closeEditPartnerModal = () => {
+    if (isUpdatingPartner) return;
+    setEditSelectedRiderPhoto(null);
+    replaceEditPreviewUrl(null);
+    setEditPhotoRemoved(false);
+    setEditUploadError(null);
+    setEditModalError(null);
+    if (editRiderPhotoInputRef.current) {
+      editRiderPhotoInputRef.current.value = '';
+    }
+    setEditingPartner(null);
+  };
+
+  const handleSelectEditRiderPhoto = (file: File) => {
+    setEditSelectedRiderPhoto(file);
+    setEditPhotoRemoved(false);
+    setEditUploadError(null);
+    setEditModalError(null);
+    replaceEditPreviewUrl(URL.createObjectURL(file));
+  };
+
+  const handleRemoveEditRiderPhoto = () => {
+    setEditSelectedRiderPhoto(null);
+    replaceEditPreviewUrl(null);
+    setEditUploadError(null);
+    setEditPhotoRemoved(true);
+    if (editRiderPhotoInputRef.current) {
+      editRiderPhotoInputRef.current.value = '';
+    }
+  };
+
+  // Create Partner (multipart/form-data with server-validated Cloudinary upload)
+  const handleCreatePartner = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (createSubmittingRef.current || isUploading) {
+      return;
+    }
+
+    if (
+      !newPartner.name.trim() ||
+      !newPartner.phone.trim() ||
+      !newPartner.password.trim() ||
+      !newPartner.cnic.trim() ||
+      !newPartner.bikeNumber.trim() ||
+      !newPartner.area.trim() ||
+      !newPartner.city.trim()
+    ) {
+      const msg = 'Please complete all required delivery partner details.';
+      setAddModalError(msg);
+      showFeedback('error', msg);
+      return;
+    }
+
+    if (uploadError) {
+      setAddModalError(uploadError);
+      return;
+    }
+
+    createSubmittingRef.current = true;
+    setIsUploading(true);
+    setAddModalError(null);
+
+    try {
+      const formData = new FormData();
+      formData.append('name', newPartner.name.trim());
+      formData.append('phone', newPartner.phone.trim());
+      formData.append('password', newPartner.password);
+      formData.append('cnic', newPartner.cnic.trim());
+      formData.append('bikeNumber', newPartner.bikeNumber.trim());
+      formData.append('city', newPartner.city.trim());
+      formData.append('area', newPartner.area.trim());
+      if (selectedRiderPhoto) {
+        formData.append('photo', selectedRiderPhoto);
+      }
+
+      const response = await fetch('/api/admin/delivery-partners', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const result = (await response.json()) as {
+        success?: boolean;
+        message?: string;
+        error?: string;
+      };
+
+      if (!response.ok || !result.success) {
+        const errMsg = result.error || 'Failed to register delivery partner.';
+        setAddModalError(errMsg);
+        showFeedback('error', errMsg);
+        return;
+      }
+
+      showFeedback('success', result.message || 'Delivery Partner registered successfully!');
+      resetAddPartnerForm();
+      setShowAddPartnerModal(false);
+      await loadData();
+    } catch {
+      const errMsg = 'Network error while saving delivery partner. Please try again.';
+      setAddModalError(errMsg);
+      showFeedback('error', errMsg);
+    } finally {
+      createSubmittingRef.current = false;
+      setIsUploading(false);
+    }
+  };
+
+  // Update Partner (preserves existing photo unless replaced or explicitly removed)
   const handleUpdatePartner = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingPartner) return;
+    if (!editingPartner || updateSubmittingRef.current || isUpdatingPartner) return;
 
-    const res = await updateDeliveryPartner({
-      id: editingPartner._id.toString(),
-      name: editingPartner.name,
-      phone: editingPartner.phone,
-      cnic: editingPartner.cnic,
-      bikeNumber: editingPartner.bikeNumber,
-      area: editingPartner.area,
-      city: editingPartner.city,
-      status: editingPartner.status,
-      photo: editingPartner.photo,
-    });
+    if (
+      !editingPartner.name.trim() ||
+      !editingPartner.phone.trim() ||
+      !editingPartner.cnic.trim() ||
+      !editingPartner.bikeNumber.trim() ||
+      !editingPartner.area.trim() ||
+      !editingPartner.city.trim()
+    ) {
+      const msg = 'Please complete all required partner fields.';
+      setEditModalError(msg);
+      showFeedback('error', msg);
+      return;
+    }
 
-    if (res.success) {
-      showFeedback('success', 'Partner updated successfully.');
+    if (editUploadError) {
+      setEditModalError(editUploadError);
+      return;
+    }
+
+    updateSubmittingRef.current = true;
+    setIsUpdatingPartner(true);
+    setEditModalError(null);
+
+    try {
+      const formData = new FormData();
+      formData.append('id', editingPartner._id.toString());
+      formData.append('name', editingPartner.name.trim());
+      formData.append('phone', editingPartner.phone.trim());
+      formData.append('cnic', editingPartner.cnic.trim());
+      formData.append('bikeNumber', editingPartner.bikeNumber.trim());
+      formData.append('area', editingPartner.area.trim());
+      formData.append('city', editingPartner.city.trim());
+      formData.append('status', editingPartner.status);
+      if (editingPartner.password && editingPartner.password.trim()) {
+        formData.append('password', editingPartner.password.trim());
+      }
+      if (editSelectedRiderPhoto) {
+        formData.append('photo', editSelectedRiderPhoto);
+      } else if (editPhotoRemoved) {
+        formData.append('removePhoto', 'true');
+      }
+
+      const response = await fetch('/api/admin/delivery-partners', {
+        method: 'PATCH',
+        body: formData,
+      });
+
+      const result = (await response.json()) as {
+        success?: boolean;
+        message?: string;
+        error?: string;
+      };
+
+      if (!response.ok || !result.success) {
+        const errMsg = result.error || 'Failed to update partner.';
+        setEditModalError(errMsg);
+        showFeedback('error', errMsg);
+        return;
+      }
+
+      showFeedback('success', result.message || 'Partner updated successfully.');
+      setEditSelectedRiderPhoto(null);
+      replaceEditPreviewUrl(null);
+      setEditPhotoRemoved(false);
+      setEditUploadError(null);
+      setEditModalError(null);
+      if (editRiderPhotoInputRef.current) {
+        editRiderPhotoInputRef.current.value = '';
+      }
       setEditingPartner(null);
-      loadData();
-    } else {
-      showFeedback('error', res.error || 'Failed to update partner.');
+      await loadData();
+    } catch {
+      const errMsg = 'Network error while updating delivery partner. Please try again.';
+      setEditModalError(errMsg);
+      showFeedback('error', errMsg);
+    } finally {
+      updateSubmittingRef.current = false;
+      setIsUpdatingPartner(false);
     }
   };
 
@@ -455,7 +695,10 @@ export default function AdminDeliveryPartnersPage() {
 
           <div className="flex flex-wrap items-center gap-3 self-stretch sm:self-auto">
             <button
-              onClick={() => setShowAddPartnerModal(true)}
+              onClick={() => {
+                resetAddPartnerForm();
+                setShowAddPartnerModal(true);
+              }}
               className="px-5 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-black font-black text-xs uppercase tracking-wider transition-all shadow-md flex items-center gap-2 group hover:scale-105"
             >
               <Plus className="h-4 w-4" />
@@ -632,8 +875,8 @@ export default function AdminDeliveryPartnersPage() {
                     {/* Header info */}
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex items-center gap-3">
-                        <div className="relative h-12 w-12 rounded-2xl bg-neutral-800 overflow-hidden border border-neutral-700 shrink-0">
-                          {partner.photo && (
+                        <div className="relative h-12 w-12 rounded-2xl bg-neutral-800 overflow-hidden border border-neutral-700 shrink-0 flex items-center justify-center">
+                          {partner.photo ? (
                             <Image
                               src={partner.photo}
                               alt={partner.name}
@@ -642,6 +885,8 @@ export default function AdminDeliveryPartnersPage() {
                               className="object-cover"
                               sizes="48px"
                             />
+                          ) : (
+                            <Bike className="h-5 w-5 text-amber-400" />
                           )}
                         </div>
                         <div>
@@ -698,7 +943,7 @@ export default function AdminDeliveryPartnersPage() {
                   <div className="pt-3 border-t border-neutral-800 flex items-center justify-between gap-2">
                     <div className="flex items-center gap-1.5">
                       <button
-                        onClick={() => setEditingPartner(partner)}
+                        onClick={() => openEditPartnerModal(partner)}
                         className="p-2 bg-neutral-800 hover:bg-neutral-700 rounded-xl text-neutral-300 transition-colors"
                         title="Edit Partner"
                       >
@@ -756,7 +1001,7 @@ export default function AdminDeliveryPartnersPage() {
               partners={filteredPartners}
               selectedCity={selectedCity}
               onSelectPartner={(partner) => {
-                setEditingPartner(partner);
+                openEditPartnerModal(partner);
               }}
             />
           </div>
@@ -991,7 +1236,7 @@ export default function AdminDeliveryPartnersPage() {
       {/* MODAL 1: ADD DELIVERY PARTNER */}
       {showAddPartnerModal && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-neutral-900 border border-neutral-800 rounded-3xl max-w-lg w-full p-6 sm:p-8 space-y-5 shadow-2xl animate-in zoom-in-95">
+          <div className="bg-neutral-900 border border-neutral-800 rounded-3xl max-w-lg w-full max-h-[90vh] overflow-y-auto p-6 sm:p-8 space-y-5 shadow-2xl animate-in zoom-in-95">
             <div className="flex items-center justify-between border-b border-neutral-800 pb-4">
               <div className="flex items-center gap-2">
                 <Bike className="h-5 w-5 text-amber-400" />
@@ -1000,12 +1245,25 @@ export default function AdminDeliveryPartnersPage() {
                 </h3>
               </div>
               <button
-                onClick={() => setShowAddPartnerModal(false)}
-                className="p-1 rounded-full text-neutral-400 hover:text-white"
+                type="button"
+                onClick={handleCloseAddModal}
+                disabled={isUploading}
+                className="p-1 rounded-full text-neutral-400 hover:text-white disabled:opacity-50"
+                aria-label="Close register partner modal"
               >
                 <X className="h-5 w-5" />
               </button>
             </div>
+
+            {addModalError && (
+              <div
+                role="alert"
+                className="p-3 rounded-xl bg-red-950/70 border border-red-500/40 text-red-300 text-xs font-medium flex items-center gap-2"
+              >
+                <AlertCircle className="h-4 w-4 shrink-0 text-red-400" />
+                <span>{addModalError}</span>
+              </div>
+            )}
 
             <form onSubmit={handleCreatePartner} className="space-y-4 text-xs">
               <div className="space-y-1">
@@ -1013,23 +1271,25 @@ export default function AdminDeliveryPartnersPage() {
                 <input
                   type="text"
                   required
+                  disabled={isUploading}
                   placeholder="e.g. Ali Khan (Peshawar Fleet)"
                   value={newPartner.name}
                   onChange={(e) => setNewPartner({ ...newPartner, name: e.target.value })}
-                  className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-amber-400"
+                  className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-amber-400 disabled:opacity-60"
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <label className="font-bold text-neutral-300">Phone Number *</label>
                   <input
                     type="text"
                     required
+                    disabled={isUploading}
                     placeholder="03001234567"
                     value={newPartner.phone}
                     onChange={(e) => setNewPartner({ ...newPartner, phone: e.target.value })}
-                    className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-white font-mono focus:outline-none focus:border-amber-400"
+                    className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-white font-mono focus:outline-none focus:border-amber-400 disabled:opacity-60"
                   />
                 </div>
                 <div className="space-y-1">
@@ -1037,24 +1297,26 @@ export default function AdminDeliveryPartnersPage() {
                   <input
                     type="password"
                     required
+                    disabled={isUploading}
                     placeholder="••••••"
                     value={newPartner.password}
                     onChange={(e) => setNewPartner({ ...newPartner, password: e.target.value })}
-                    className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-amber-400"
+                    className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-amber-400 disabled:opacity-60"
                   />
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <label className="font-bold text-neutral-300">CNIC Number *</label>
                   <input
                     type="text"
                     required
+                    disabled={isUploading}
                     placeholder="17301-1234567-1"
                     value={newPartner.cnic}
                     onChange={(e) => setNewPartner({ ...newPartner, cnic: e.target.value })}
-                    className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-white font-mono focus:outline-none focus:border-amber-400"
+                    className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-white font-mono focus:outline-none focus:border-amber-400 disabled:opacity-60"
                   />
                 </div>
                 <div className="space-y-1">
@@ -1062,21 +1324,23 @@ export default function AdminDeliveryPartnersPage() {
                   <input
                     type="text"
                     required
+                    disabled={isUploading}
                     placeholder="PSH-7842"
                     value={newPartner.bikeNumber}
                     onChange={(e) => setNewPartner({ ...newPartner, bikeNumber: e.target.value })}
-                    className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-white uppercase font-mono focus:outline-none focus:border-amber-400"
+                    className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-white uppercase font-mono focus:outline-none focus:border-amber-400 disabled:opacity-60"
                   />
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <label className="font-bold text-neutral-300">City *</label>
                   <select
                     value={newPartner.city}
+                    disabled={isUploading}
                     onChange={(e) => setNewPartner({ ...newPartner, city: e.target.value })}
-                    className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-amber-400"
+                    className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-amber-400 disabled:opacity-60"
                   >
                     {PAKISTAN_MAJOR_CITIES.map((c) => (
                       <option key={c} value={c}>
@@ -1090,38 +1354,48 @@ export default function AdminDeliveryPartnersPage() {
                   <input
                     type="text"
                     required
+                    disabled={isUploading}
                     placeholder="Hayatabad & University Road"
                     value={newPartner.area}
                     onChange={(e) => setNewPartner({ ...newPartner, area: e.target.value })}
-                    className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-amber-400"
+                    className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-amber-400 disabled:opacity-60"
                   />
                 </div>
               </div>
 
-              <div className="space-y-1">
-                <label className="font-bold text-neutral-300">Rider Photo URL</label>
-                <input
-                  type="url"
-                  placeholder="https://..."
-                  value={newPartner.photo}
-                  onChange={(e) => setNewPartner({ ...newPartner, photo: e.target.value })}
-                  className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-amber-400"
-                />
-              </div>
+              <RiderPhotoUploadField
+                selectedFile={selectedRiderPhoto}
+                previewUrl={previewUrl}
+                error={uploadError}
+                disabled={isUploading}
+                inputRef={riderPhotoInputRef}
+                onFileSelect={handleSelectAddRiderPhoto}
+                onValidationError={setUploadError}
+                onRemovePhoto={handleRemoveAddRiderPhoto}
+              />
 
               <div className="pt-2 flex items-center justify-end gap-3">
                 <button
                   type="button"
-                  onClick={() => setShowAddPartnerModal(false)}
-                  className="px-5 py-2.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-300 font-bold"
+                  onClick={handleCloseAddModal}
+                  disabled={isUploading}
+                  className="px-5 py-2.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-300 font-bold disabled:opacity-50"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-6 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-black font-black uppercase tracking-wider shadow-md"
+                  disabled={isUploading}
+                  className="px-6 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-black font-black uppercase tracking-wider shadow-md inline-flex items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
                 >
-                  Save Partner
+                  {isUploading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  <span>
+                    {isUploading
+                      ? selectedRiderPhoto
+                        ? 'Uploading & Saving...'
+                        : 'Saving Partner...'
+                      : 'Save Partner'}
+                  </span>
                 </button>
               </div>
             </form>
@@ -1314,6 +1588,189 @@ export default function AdminDeliveryPartnersPage() {
             >
               Update Wallet
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 5: EDIT DELIVERY PARTNER */}
+      {editingPartner && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-neutral-900 border border-neutral-800 rounded-3xl max-w-lg w-full max-h-[90vh] overflow-y-auto p-6 sm:p-8 space-y-5 shadow-2xl animate-in zoom-in-95">
+            <div className="flex items-center justify-between border-b border-neutral-800 pb-4">
+              <div className="flex items-center gap-2">
+                <Edit2 className="h-5 w-5 text-amber-400" />
+                <h3 className="text-lg font-black uppercase text-white tracking-tight">
+                  Edit Delivery Partner
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={closeEditPartnerModal}
+                disabled={isUpdatingPartner}
+                className="p-1 rounded-full text-neutral-400 hover:text-white disabled:opacity-50"
+                aria-label="Close edit partner modal"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {editModalError && (
+              <div
+                role="alert"
+                className="p-3 rounded-xl bg-red-950/70 border border-red-500/40 text-red-300 text-xs font-medium flex items-center gap-2"
+              >
+                <AlertCircle className="h-4 w-4 shrink-0 text-red-400" />
+                <span>{editModalError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleUpdatePartner} className="space-y-4 text-xs">
+              <div className="space-y-1">
+                <label className="font-bold text-neutral-300">Partner Full Name *</label>
+                <input
+                  type="text"
+                  required
+                  disabled={isUpdatingPartner}
+                  value={editingPartner.name}
+                  onChange={(e) => setEditingPartner({ ...editingPartner, name: e.target.value })}
+                  className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-amber-400 disabled:opacity-60"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="font-bold text-neutral-300">Phone Number *</label>
+                  <input
+                    type="text"
+                    required
+                    disabled={isUpdatingPartner}
+                    value={editingPartner.phone}
+                    onChange={(e) => setEditingPartner({ ...editingPartner, phone: e.target.value })}
+                    className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-white font-mono focus:outline-none focus:border-amber-400 disabled:opacity-60"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="font-bold text-neutral-300">New Password (Optional)</label>
+                  <input
+                    type="password"
+                    disabled={isUpdatingPartner}
+                    placeholder="Leave blank to keep current"
+                    value={editingPartner.password || ''}
+                    onChange={(e) => setEditingPartner({ ...editingPartner, password: e.target.value })}
+                    className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-amber-400 disabled:opacity-60"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="font-bold text-neutral-300">CNIC Number *</label>
+                  <input
+                    type="text"
+                    required
+                    disabled={isUpdatingPartner}
+                    value={editingPartner.cnic}
+                    onChange={(e) => setEditingPartner({ ...editingPartner, cnic: e.target.value })}
+                    className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-white font-mono focus:outline-none focus:border-amber-400 disabled:opacity-60"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="font-bold text-neutral-300">Bike Registration No *</label>
+                  <input
+                    type="text"
+                    required
+                    disabled={isUpdatingPartner}
+                    value={editingPartner.bikeNumber}
+                    onChange={(e) => setEditingPartner({ ...editingPartner, bikeNumber: e.target.value })}
+                    className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-white uppercase font-mono focus:outline-none focus:border-amber-400 disabled:opacity-60"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="space-y-1">
+                  <label className="font-bold text-neutral-300">City *</label>
+                  <select
+                    value={editingPartner.city}
+                    disabled={isUpdatingPartner}
+                    onChange={(e) => setEditingPartner({ ...editingPartner, city: e.target.value })}
+                    className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-amber-400 disabled:opacity-60"
+                  >
+                    {PAKISTAN_MAJOR_CITIES.map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="font-bold text-neutral-300">Status</label>
+                  <select
+                    value={editingPartner.status}
+                    disabled={isUpdatingPartner}
+                    onChange={(e) =>
+                      setEditingPartner({
+                        ...editingPartner,
+                        status: e.target.value as DeliveryPartnerStatus,
+                      })
+                    }
+                    className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-amber-400 disabled:opacity-60"
+                  >
+                    <option value={DeliveryPartnerStatus.ACTIVE}>Active</option>
+                    <option value={DeliveryPartnerStatus.INACTIVE}>Inactive</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="font-bold text-neutral-300">Assigned Area *</label>
+                  <input
+                    type="text"
+                    required
+                    disabled={isUpdatingPartner}
+                    value={editingPartner.area}
+                    onChange={(e) => setEditingPartner({ ...editingPartner, area: e.target.value })}
+                    className="w-full bg-neutral-950 border border-neutral-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-amber-400 disabled:opacity-60"
+                  />
+                </div>
+              </div>
+
+              <RiderPhotoUploadField
+                selectedFile={editSelectedRiderPhoto}
+                previewUrl={editPreviewUrl}
+                existingPhotoUrl={editingPartner.photo}
+                photoRemoved={editPhotoRemoved}
+                error={editUploadError}
+                disabled={isUpdatingPartner}
+                inputRef={editRiderPhotoInputRef}
+                onFileSelect={handleSelectEditRiderPhoto}
+                onValidationError={setEditUploadError}
+                onRemovePhoto={handleRemoveEditRiderPhoto}
+              />
+
+              <div className="pt-2 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={closeEditPartnerModal}
+                  disabled={isUpdatingPartner}
+                  className="px-5 py-2.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-300 font-bold disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isUpdatingPartner}
+                  className="px-6 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-black font-black uppercase tracking-wider shadow-md inline-flex items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {isUpdatingPartner && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  <span>
+                    {isUpdatingPartner
+                      ? editSelectedRiderPhoto
+                        ? 'Uploading & Updating...'
+                        : 'Updating Partner...'
+                      : 'Update Partner'}
+                  </span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

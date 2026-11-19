@@ -641,10 +641,15 @@ export default function AdminDeliveryPartnersPage() {
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col justify-between selection:bg-amber-500 selection:text-black">
       {/* Header */}
-      <header className="border-b border-neutral-800 bg-neutral-900/90 backdrop-blur-md px-6 py-3.5 flex items-center justify-between sticky top-0 z-30">
-        <div className="flex items-center gap-3">
-          <Logo theme="dark" size="sm" withLink={false} />
-          <span className="text-[10px] font-black px-2.5 py-0.5 rounded bg-emerald-500 text-black uppercase tracking-widest font-mono">
+      <header className="border-b border-neutral-800 bg-neutral-900/90 backdrop-blur-md px-4 sm:px-6 py-3.5 grid grid-cols-[1fr_auto] items-center gap-x-2 gap-y-2.5 sm:flex sm:items-center sm:justify-between sm:gap-0 sticky top-0 z-30">
+        <div className="contents sm:flex sm:items-center sm:gap-3">
+          <Logo
+            theme="dark"
+            size="sm"
+            withLink={false}
+            className="col-start-1 row-start-1 justify-self-start"
+          />
+          <span className="col-start-1 row-start-2 justify-self-start text-[9px] sm:text-[10px] font-black px-2 sm:px-2.5 py-0.5 rounded bg-emerald-500 text-black uppercase tracking-wider sm:tracking-widest font-mono whitespace-nowrap">
             Private Fleet Command
           </span>
           <span className="hidden md:inline text-xs text-neutral-400">
@@ -652,22 +657,22 @@ export default function AdminDeliveryPartnersPage() {
           </span>
         </div>
 
-        <div className="flex items-center gap-3 text-xs">
+        <div className="contents sm:flex sm:items-center sm:gap-3 text-xs">
           <Link
             href="/delivery"
             target="_blank"
             rel="noopener noreferrer"
-            className="px-3 py-1.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 hover:bg-emerald-500/30 transition-colors flex items-center gap-1.5 font-bold"
+            className="col-start-2 row-start-2 justify-self-end text-[11px] sm:text-xs px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 hover:bg-emerald-500/30 transition-colors flex items-center gap-1.5 font-bold whitespace-nowrap"
             title="Open Mobile Rider App in new tab"
           >
-            <Bike className="h-3.5 w-3.5" />
+            <Bike className="h-3.5 w-3.5 shrink-0" />
             <span>Open Rider App →</span>
           </Link>
           <Link
             href="/admin"
-            className="text-neutral-400 hover:text-white transition-colors flex items-center gap-1"
+            className="col-start-2 row-start-1 justify-self-end text-neutral-400 hover:text-white transition-colors flex items-center gap-1 whitespace-nowrap"
           >
-            <ArrowLeft className="h-3.5 w-3.5" />
+            <ArrowLeft className="h-3.5 w-3.5 shrink-0" />
             <span>Main ERP</span>
           </Link>
         </div>
